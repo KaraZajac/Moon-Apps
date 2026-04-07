@@ -319,7 +319,7 @@ static bool update_get_fap_file(FlipperHTTP *fhttp, bool flipper_server)
     char url[256];
     fhttp->save_received_data = false;
     fhttp->is_bytes_request = true;
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Bloodmoon
     snprintf(
         fhttp->file_path,
         sizeof(fhttp->file_path),

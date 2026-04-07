@@ -10,6 +10,9 @@ App(
     fap_libs=["mbedtls"],
     fap_private_libs=[
         Lib(
+            name="nfc",
+        ),
+        Lib(
             name="amiitool",
         ),
     ],

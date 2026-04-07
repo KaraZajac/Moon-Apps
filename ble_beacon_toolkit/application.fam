@@ -1,0 +1,11 @@
+App(
+    appid="ble_beacon_toolkit",
+    name="BLE Beacon",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="ble_beacon_toolkit_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Create and broadcast custom iBeacon, Eddystone-URL, and AltBeacon advertisements",
+)

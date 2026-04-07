@@ -7,6 +7,7 @@ App(
     stack_size=2 * 1024,
     fap_icon="ir_scope.png",
     fap_category="Infrared",
+    fap_libs=["infrared"],
     fap_author="@kallanreed",
     fap_version="1.4",
     fap_description="App allows to see incoming IR signals.",

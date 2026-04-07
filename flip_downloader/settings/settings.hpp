@@ -14,7 +14,7 @@ class FlipDownloaderSettings
 {
 private:
     void *appContext = nullptr; // reference to the app context
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Bloodmoon
     UART_TextInput *text_input = nullptr; // UART text input instance
 #else
     TextInput *text_input = nullptr; // Original text input instance for Momentum

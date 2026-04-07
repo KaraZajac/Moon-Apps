@@ -1,0 +1,11 @@
+App(
+    appid="bt_scanner",
+    name="BT Scanner",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="bt_scanner_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Scan for nearby BLE devices using BLE Full Extended stack (BLE 5.3)",
+)

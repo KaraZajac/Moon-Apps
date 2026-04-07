@@ -4,6 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="meal_pager_app",
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="subghz")],
     fap_icon="icons/meal_pager_10px.png",
     fap_icon_assets="icons",
     fap_category="Sub-GHz",

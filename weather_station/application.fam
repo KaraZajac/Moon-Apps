@@ -6,6 +6,7 @@ App(
     entry_point="weather_station_app",
     requires=["gui"],
     stack_size=4 * 1024,
+    fap_private_libs=[Lib(name="subghz")],
     fap_description="Receive weather data from a wide range of supported Sub-1GHz remote sensor",
     fap_version="2.0",
     fap_icon="weather_station_10px.png",

@@ -5,6 +5,7 @@ App(
     entry_point="ulcfkey_app",
     requires=["gui", "subghz"],
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_version=(1, 0),
     fap_icon="ulcfkey.png",
     fap_icon_assets="images",

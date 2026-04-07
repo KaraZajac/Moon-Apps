@@ -2,7 +2,7 @@
 
 #include "gen2_poller.h"
 #include <nfc/protocols/nfc_generic_event.h>
-#include "crypto1.h" // TODO: Move to a better home
+#include <nfc/helpers/crypto1.h>
 #include <nfc/protocols/iso14443_3a/iso14443_3a_poller.h>
 
 #ifdef __cplusplus

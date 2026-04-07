@@ -3,7 +3,7 @@
 #include <furi_hal.h>
 
 // Define GPS_UART_CH per firmware origin
-#ifdef FW_ORIGIN_Momentum
+#ifdef FW_ORIGIN_Bloodmoon
 #include <momentum/momentum.h>
 #define GPS_UART_CH (momentum_settings.uart_nmea_channel)
 #else

@@ -18,7 +18,7 @@ void nfc_maker_scene_contact_url_on_enter(void* context) {
 
     strlcpy(
         app->big_buf,
-#ifdef FW_ORIGIN_Momentum
+#ifdef FW_ORIGIN_Bloodmoon
         "momentum-fw.dev",
 #else
         "flipperzero.one",
