@@ -12,5 +12,6 @@ App(
     fap_weburl="https://github.com/Firefox2100/ami-tool",
     fap_file_assets="files",
     fap_libs=["mbedtls"],
+    fap_private_libs=[Lib(name="nfc")],
     fap_version="0.2.1",
 )

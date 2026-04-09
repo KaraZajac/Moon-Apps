@@ -133,7 +133,7 @@ void FlipMapSettings::freeTextInput()
     if (text_input && view_dispatcher_ref && *view_dispatcher_ref)
     {
         view_dispatcher_remove_view(*view_dispatcher_ref, FlipMapViewTextInput);
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Moon
         uart_text_input_free(text_input);
 #else
         text_input_free(text_input);
@@ -179,7 +179,7 @@ bool FlipMapSettings::initTextInput(uint32_t view)
             text_input_temp_buffer[0] = '\0'; // Ensure empty if not loaded
         }
         text_input_temp_buffer[text_input_buffer_size - 1] = '\0'; // Ensure null-termination
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Moon
         return easy_flipper_set_uart_text_input(&text_input, FlipMapViewTextInput,
                                                 "Enter SSID", text_input_temp_buffer.get(), text_input_buffer_size,
                                                 textUpdatedSsidCallback, callbackToSettings, view_dispatcher_ref, this);
@@ -200,7 +200,7 @@ bool FlipMapSettings::initTextInput(uint32_t view)
             text_input_temp_buffer[0] = '\0'; // Ensure empty if not loaded
         }
         text_input_temp_buffer[text_input_buffer_size - 1] = '\0'; // Ensure null-termination
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Moon
         return easy_flipper_set_uart_text_input(&text_input, FlipMapViewTextInput,
                                                 "Enter Password", text_input_temp_buffer.get(), text_input_buffer_size,
                                                 textUpdatedPassCallback, callbackToSettings, view_dispatcher_ref, this);
@@ -221,7 +221,7 @@ bool FlipMapSettings::initTextInput(uint32_t view)
             text_input_temp_buffer[0] = '\0'; // Ensure empty if not loaded
         }
         text_input_temp_buffer[text_input_buffer_size - 1] = '\0'; // Ensure null-termination
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Moon
         return easy_flipper_set_uart_text_input(&text_input, FlipMapViewTextInput,
                                                 "Enter User Name", text_input_temp_buffer.get(), text_input_buffer_size,
                                                 textUpdatedUserNameCallback, callbackToSettings, view_dispatcher_ref, this);
@@ -242,7 +242,7 @@ bool FlipMapSettings::initTextInput(uint32_t view)
             text_input_temp_buffer[0] = '\0'; // Ensure empty if not loaded
         }
         text_input_temp_buffer[text_input_buffer_size - 1] = '\0'; // Ensure null-termination
-#ifndef FW_ORIGIN_Momentum
+#ifndef FW_ORIGIN_Moon
         return easy_flipper_set_uart_text_input(&text_input, FlipMapViewTextInput,
                                                 "Enter User Password", text_input_temp_buffer.get(), text_input_buffer_size,
                                                 textUpdatedUserPassCallback, callbackToSettings, view_dispatcher_ref, this);

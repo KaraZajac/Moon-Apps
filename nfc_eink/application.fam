@@ -6,6 +6,7 @@ App(
     entry_point="nfc_eink",
     icon="A_NFC_14",
     stack_size=5 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     order=30,
     sources=[
         "*.c*"

@@ -13,7 +13,7 @@ App(
     ],
     stack_size=4 * 1024,
     order=10,
-    fap_libs=["ble_profile"],
+    fap_libs=["ble_profile", "lfrfid"],
     fap_icon="icons/flipper_wedge_10px.png",
     fap_icon_assets="icons",
     fap_category="Tools",

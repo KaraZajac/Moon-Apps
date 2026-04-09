@@ -15,6 +15,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="nfc_apdu_runner_app",
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_category="NFC",
     targets=["f7"],
     # Optional values

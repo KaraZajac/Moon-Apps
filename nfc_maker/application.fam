@@ -12,4 +12,5 @@ App(
     fap_description="Create NFC files for BT MACs, Contacts, Links, Emails, Phones, Text and WiFis",
     fap_icon_assets="icons",
     fap_libs=["assets"],
+    fap_private_libs=[Lib(name="nfc")],
 )

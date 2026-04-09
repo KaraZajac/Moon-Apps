@@ -4,6 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="metroflip",
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_category="NFC",
     fap_version="0.9",
     fap_icon="icon.png",

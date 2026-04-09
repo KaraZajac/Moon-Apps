@@ -8,6 +8,8 @@ App(
     fap_icon_assets="icons",
     fap_version="3.3",
     fap_category="Infrared",
+    fap_libs=["infrared"],
+    fap_private_libs=[Lib(name="subghz")],
     fap_author="Leedave",
     fap_description="One-Click, sends multiple commands",
     fap_weburl="https://github.com/leedave/flipper-zero-cross-remote",

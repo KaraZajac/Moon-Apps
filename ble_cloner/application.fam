@@ -1,0 +1,11 @@
+App(
+    appid="ble_cloner",
+    name="BLE Cloner",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="ble_cloner_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Scan a BLE device, capture its advertising data, and replay it as a clone",
+)

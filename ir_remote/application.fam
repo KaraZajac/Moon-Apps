@@ -9,6 +9,7 @@ App(
         "dialogs",
     ],
     fap_category="Infrared",
+    fap_libs=["infrared"],
     fap_icon="ir_10px.png",
     fap_icon_assets="images",
     fap_author="@Hong5489 & @friebel & @d4ve10",

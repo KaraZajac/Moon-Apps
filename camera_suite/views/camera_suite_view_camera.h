@@ -26,7 +26,7 @@
 */
 #include <xtreme/xtreme.h>
 #define UART_CH (xtreme_settings.uart_esp_channel)
-#elif defined FW_ORIGIN_Momentum
+#elif defined FW_ORIGIN_Moon
 /**
  * Enable the following line for "Momentum Firmware" & "Momentum Apps".
  * 

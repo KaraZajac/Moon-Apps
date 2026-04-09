@@ -1,0 +1,11 @@
+App(
+    appid="ble_rssi_tracker",
+    name="BLE Tracker",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="ble_rssi_tracker_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Lock onto a BLE device and track its RSSI signal strength with a live graph",
+)

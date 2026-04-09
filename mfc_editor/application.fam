@@ -9,6 +9,7 @@ App(
         "gui",
     ],
     stack_size=4 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_description="Application for viewing and editing MIFARE Classic .nfc files",
     fap_version="1.0",
     fap_icon="assets/app_icon_10px.png",

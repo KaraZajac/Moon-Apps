@@ -6,6 +6,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="portal_of_flipper_app",
     stack_size=5 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_category="USB",
     # Optional values
     fap_version="1.3",

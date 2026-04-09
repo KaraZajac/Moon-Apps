@@ -6,6 +6,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="scheduler_app",
     stack_size=5 * 1024,
+    fap_private_libs=[Lib(name="subghz")],
     fap_category="Sub-GHz",
     fap_version="2.3",
     fap_icon="icons/icon.png",  # 10x10 1-bit PNG

@@ -16,4 +16,5 @@ App(
     fap_icon_assets="images",  # Image assets to compile for this application
     fap_file_assets="files",
     fap_libs=["mbedtls"],
+    fap_private_libs=[Lib(name="nfc")],
 )

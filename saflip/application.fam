@@ -6,6 +6,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="saflip_app",
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="nfc")],
     fap_category="NFC",
     # Optional values
     fap_version="0.1",

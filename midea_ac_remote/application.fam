@@ -16,6 +16,7 @@ App(
     fap_version="1.0",
     fap_icon="ac_remote.png",
     fap_category="Infrared",
+    fap_libs=["infrared"],
     fap_icon_assets="assets",
     fap_private_libs=[
         Lib(

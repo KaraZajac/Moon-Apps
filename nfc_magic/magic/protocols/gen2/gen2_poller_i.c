@@ -8,9 +8,8 @@
 
 #define TAG "GEN2_I"
 
-MfClassicError mf_classic_process_error(Iso14443_3aError error) {
+static MfClassicError gen2_mf_classic_process_error(Iso14443_3aError error) {
     MfClassicError ret = MfClassicErrorNone;
-
     switch(error) {
     case Iso14443_3aErrorNone:
         ret = MfClassicErrorNone;
@@ -108,7 +107,7 @@ static Gen2PollerError gen2_poller_get_nt_common(
                 instance->rx_plain_buffer, // NT gets decrypted by mf_classic_async_auth
                 GEN2_POLLER_MAX_FWT);
             if(error != Iso14443_3aErrorNone) {
-                ret = mf_classic_process_error(error);
+                ret = gen2_mf_classic_process_error(error);
                 break;
             }
         } else {
@@ -119,7 +118,7 @@ static Gen2PollerError gen2_poller_get_nt_common(
                 instance->rx_plain_buffer,
                 GEN2_POLLER_MAX_FWT);
             if(error != Iso14443_3aErrorWrongCrc) {
-                ret = mf_classic_process_error(error);
+                ret = gen2_mf_classic_process_error(error);
                 break;
             }
         }

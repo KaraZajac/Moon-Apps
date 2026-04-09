@@ -6,6 +6,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     entry_point="flipper_share_app",
     stack_size=2 * 1024,
+    fap_private_libs=[Lib(name="subghz")],
     fap_category="Sub-GHz",
     # Optional values
     fap_version="1.2",
