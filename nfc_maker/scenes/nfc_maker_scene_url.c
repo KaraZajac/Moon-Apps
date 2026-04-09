@@ -18,7 +18,7 @@ void nfc_maker_scene_url_on_enter(void* context) {
 
     strlcpy(
         app->big_buf,
-#ifdef FW_ORIGIN_Bloodmoon
+#ifdef FW_ORIGIN_Moon
         "https://momentum-fw.dev",
 #else
         "https://flipperzero.one",

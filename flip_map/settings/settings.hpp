@@ -17,7 +17,7 @@ class FlipMapSettings
 {
 private:
     void *appContext; // reference to the app context
-#ifndef FW_ORIGIN_Bloodmoon
+#ifndef FW_ORIGIN_Moon
     UART_TextInput *text_input = nullptr; // UART text input instance
 #else
     TextInput *text_input = nullptr; // Original text input instance for Momentum

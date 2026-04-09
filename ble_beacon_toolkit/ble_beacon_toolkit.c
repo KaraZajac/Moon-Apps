@@ -238,7 +238,7 @@ int32_t ble_beacon_toolkit_app(void* p) {
     app->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
     app->event_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
 
-    // Default iBeacon UUID (Bloodmoon)
+    // Default iBeacon UUID (Moon)
     uint8_t default_uuid[16] = {
         0xB1, 0x00, 0xD0, 0x00, 0x4D, 0x00, 0x00, 0x4E,
         0xBE, 0xAC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01};

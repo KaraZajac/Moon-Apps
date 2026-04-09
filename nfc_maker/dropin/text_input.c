@@ -1,6 +1,6 @@
 #include "text_input.h"
 
-#ifndef FW_ORIGIN_Bloodmoon
+#ifndef FW_ORIGIN_Moon
 extern const Icon I_KeySaveSelected_22x11;
 extern const Icon I_KeySave_22x11;
 extern const Icon I_KeyKeyboardSelected_10x11;
