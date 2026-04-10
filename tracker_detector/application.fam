@@ -1,0 +1,13 @@
+App(
+    appid="tracker_detector",
+    name="Tracker Detector",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="tracker_detector_app",
+    stack_size=4 * 1024,
+    requires=["gui"],
+    fap_category="Bluetooth",
+    fap_icon="icon.png",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Detect nearby BLE trackers (AirTag, SmartTag, Tile, Chipolo, Google FMDN). Alerts when a tracker may be following you.",
+)

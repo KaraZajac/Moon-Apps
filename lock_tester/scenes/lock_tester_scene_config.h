@@ -1,0 +1,7 @@
+ADD_SCENE(lock_tester, start, Start)
+ADD_SCENE(lock_tester, scan, Scan)
+ADD_SCENE(lock_tester, scan_results, ScanResults)
+ADD_SCENE(lock_tester, connecting, Connecting)
+ADD_SCENE(lock_tester, connected, Connected)
+ADD_SCENE(lock_tester, test_run, TestRun)
+ADD_SCENE(lock_tester, char_write, CharWrite)

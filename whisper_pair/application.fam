@@ -5,6 +5,7 @@ App(
     entry_point="whisper_pair_app",
     stack_size=4 * 1024,
     fap_category="Bluetooth",
+    fap_icon="icon.png",
     fap_author="@KaraZajac",
     fap_version="0.1",
     fap_description="Fast Pair vulnerability scanner (CVE-2025-36911). Scans for vulnerable BLE audio devices and tests Fast Pair Key-Based Pairing.",
