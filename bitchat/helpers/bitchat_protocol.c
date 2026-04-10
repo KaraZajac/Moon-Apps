@@ -26,9 +26,9 @@ static uint64_t get_u64_be(const uint8_t* buf) {
 }
 
 static uint64_t bc_timestamp_now(void) {
-    // Flipper doesn't have wall-clock time; use tick count as relative timestamp
-    extern uint32_t furi_get_tick(void);
-    return (uint64_t)furi_get_tick();
+    // Unix timestamp in milliseconds (Android uses System.currentTimeMillis())
+    extern uint32_t furi_hal_rtc_get_timestamp(void);
+    return (uint64_t)furi_hal_rtc_get_timestamp() * 1000ULL;
 }
 
 // ── Encoding ─────────────────────────────────────────────────────────
@@ -206,25 +206,37 @@ uint16_t bc_build_signed_announce_packet(
     return total;
 }
 
-uint16_t bc_build_broadcast_message_packet(
+uint16_t bc_build_signed_broadcast_packet(
     uint8_t* buf,
     uint16_t buf_sz,
     const uint8_t* sender_id,
-    const char* content) {
-    // Android expects raw UTF-8 as the payload for broadcast messages
+    const char* content,
+    BcSignFn sign_fn,
+    void* sign_ctx) {
+    // Android expects raw UTF-8 payload + signature for broadcast messages
     uint16_t content_len = strlen(content);
     if(content_len == 0) return 0;
 
     uint16_t hdr_len = bc_encode_header(
-        buf, buf_sz, BC_TYPE_MESSAGE, BC_DEFAULT_TTL, 0,
-        sender_id, (const uint8_t*)content, content_len);
+        buf, buf_sz, BC_TYPE_MESSAGE, BC_DEFAULT_TTL,
+        BC_FLAG_HAS_SIGNATURE, sender_id, (const uint8_t*)content, content_len);
     if(hdr_len == 0) return 0;
-    if(hdr_len + content_len > buf_sz) return 0;
+    if(hdr_len + content_len + BC_SIGNATURE_SIZE > buf_sz) return 0;
 
     memcpy(&buf[hdr_len], content, content_len);
-    uint16_t total = hdr_len + content_len;
+    uint16_t data_end = hdr_len + content_len;
 
-    // Apply padding
+    // Sign with ttl=0
+    uint8_t sign_buf[256];
+    if(data_end > sizeof(sign_buf)) return 0;
+    memcpy(sign_buf, buf, data_end);
+    sign_buf[2] = 0; // ttl = 0 for signing
+
+    uint8_t sig[BC_SIGNATURE_SIZE];
+    sign_fn(sign_buf, data_end, sig, sign_ctx);
+    memcpy(&buf[data_end], sig, BC_SIGNATURE_SIZE);
+
+    uint16_t total = data_end + BC_SIGNATURE_SIZE;
     total = bc_apply_padding(buf, total, buf_sz);
     return total;
 }

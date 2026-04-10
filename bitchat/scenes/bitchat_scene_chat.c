@@ -1,6 +1,10 @@
 #include "../bitchat_app_i.h"
 #include <gui/modules/widget.h>
 
+static void bc_chat_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig, void* ctx) {
+    bc_identity_sign((const BcIdentity*)ctx, data, len, sig);
+}
+
 static void process_incoming_packet(BitchatApp* app) {
     // Ignore empty notifications (keepalive/subscription confirmations)
     if(app->rx_len == 0) return;
@@ -159,8 +163,9 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             // User submitted a message — send as raw UTF-8 broadcast
             if(app->input_buf[0] != '\0' && app->connected) {
                 uint8_t pkt[BC_PAD_BLOCK_256];
-                uint16_t pkt_len = bc_build_broadcast_message_packet(
-                    pkt, sizeof(pkt), app->identity.peer_id, app->input_buf);
+                uint16_t pkt_len = bc_build_signed_broadcast_packet(
+                    pkt, sizeof(pkt), app->identity.peer_id, app->input_buf,
+                    bc_chat_sign_wrapper, &app->identity);
 
                 if(pkt_len > 0) {
                     FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);

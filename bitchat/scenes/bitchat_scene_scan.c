@@ -228,9 +228,11 @@ check_gatt:
         if(event.event == BitchatCustomEventWriteComplete ||
            event.event == BitchatCustomEventGattError) {
             // Subscribed (or failed, proceed anyway). Send signed announce.
+            // Android requires ALL three TLV fields: nickname + noise key + ed25519 key
             BcAnnounce announce = {0};
             strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
-            // Include our Ed25519 public key in the announce
+            memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
+            announce.has_noise_key = true;
             memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
             announce.has_ed25519_key = true;
 

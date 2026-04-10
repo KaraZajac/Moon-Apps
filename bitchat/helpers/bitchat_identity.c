@@ -2,20 +2,17 @@
 
 #include <furi.h>
 #include <furi_hal_random.h>
-#include <furi_hal_crypto.h>
 #include <storage/storage.h>
+#include <mbedtls/sha256.h>
 
 #include "../crypto/ed25519_donna/ed25519.h"
-#include "../crypto/sha2.h"
 
 #define TAG "BitchatId"
 
-static void derive_peer_id(const uint8_t* public_key, uint8_t* peer_id) {
-    // Use SHA-512 (which we have) and take first 8 bytes
-    // This matches the Android implementation: SHA-256(pubkey)[0:8]
-    // We approximate with SHA-512 truncated - close enough for peer ID
-    uint8_t hash[64];
-    sha512_Raw(public_key, BC_ED25519_PUBLIC_KEY_SIZE, hash);
+static void derive_peer_id(const uint8_t* noise_public_key, uint8_t* peer_id) {
+    // Android: SHA-256(noiseStaticPublicKey), take first 8 bytes
+    uint8_t hash[32];
+    mbedtls_sha256(noise_public_key, BC_KEY_SIZE, hash, 0);
     memcpy(peer_id, hash, BC_PEER_ID_SIZE);
 }
 
@@ -27,9 +24,13 @@ static bool save_identity(const BcIdentity* identity) {
     bool success = false;
 
     if(storage_file_open(file, BC_IDENTITY_PATH, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
-        uint16_t written = storage_file_write(file, identity->ed25519_secret, 32);
+        // Store: ed25519_secret(32) + ed25519_public(32) + noise_secret(32) + noise_public(32)
+        uint16_t written = 0;
+        written += storage_file_write(file, identity->ed25519_secret, 32);
         written += storage_file_write(file, identity->ed25519_public, 32);
-        success = (written == 64);
+        written += storage_file_write(file, identity->noise_secret, 32);
+        written += storage_file_write(file, identity->noise_public, 32);
+        success = (written == 128);
     }
 
     storage_file_close(file);
@@ -44,9 +45,12 @@ static bool load_identity(BcIdentity* identity) {
     bool success = false;
 
     if(storage_file_open(file, BC_IDENTITY_PATH, FSAM_READ, FSOM_OPEN_EXISTING)) {
-        uint16_t read = storage_file_read(file, identity->ed25519_secret, 32);
+        uint16_t read = 0;
+        read += storage_file_read(file, identity->ed25519_secret, 32);
         read += storage_file_read(file, identity->ed25519_public, 32);
-        success = (read == 64);
+        read += storage_file_read(file, identity->noise_secret, 32);
+        read += storage_file_read(file, identity->noise_public, 32);
+        success = (read == 128);
     }
 
     storage_file_close(file);
@@ -59,17 +63,29 @@ bool bc_identity_load_or_create(BcIdentity* identity) {
     memset(identity, 0, sizeof(BcIdentity));
 
     if(load_identity(identity)) {
-        FURI_LOG_I(TAG, "Identity loaded from SD");
-        derive_peer_id(identity->ed25519_public, identity->peer_id);
+        FURI_LOG_I(TAG, "Identity loaded from SD (128 bytes)");
+        derive_peer_id(identity->noise_public, identity->peer_id);
         identity->loaded = true;
         return true;
     }
 
-    // Generate new keypair
-    FURI_LOG_I(TAG, "Generating new Ed25519 keypair");
+    // Generate new keypairs
+    FURI_LOG_I(TAG, "Generating new Ed25519 + Curve25519 keypairs");
+
+    // Ed25519 signing keypair
     furi_hal_random_fill_buf(identity->ed25519_secret, 32);
     ed25519_publickey(identity->ed25519_secret, identity->ed25519_public);
-    derive_peer_id(identity->ed25519_public, identity->peer_id);
+
+    // Curve25519 Noise keypair (for key agreement / peer identity)
+    furi_hal_random_fill_buf(identity->noise_secret, 32);
+    // Clamp the Curve25519 private key per spec
+    identity->noise_secret[0] &= 248;
+    identity->noise_secret[31] &= 127;
+    identity->noise_secret[31] |= 64;
+    curve25519_scalarmult_basepoint(identity->noise_public, identity->noise_secret);
+
+    // Derive peer ID from Noise public key
+    derive_peer_id(identity->noise_public, identity->peer_id);
 
     if(save_identity(identity)) {
         FURI_LOG_I(TAG, "Identity saved to SD");
@@ -87,12 +103,4 @@ void bc_identity_sign(
     uint16_t data_len,
     uint8_t* sig) {
     ed25519_sign(data, data_len, identity->ed25519_secret, sig);
-}
-
-bool bc_identity_verify(
-    const uint8_t* public_key,
-    const uint8_t* data,
-    uint16_t data_len,
-    const uint8_t* sig) {
-    return ed25519_sign_open(data, data_len, public_key, sig) == 0;
 }

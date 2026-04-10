@@ -124,12 +124,14 @@ uint16_t bc_build_signed_announce_packet(
     BcSignFn sign_fn,
     void* sign_ctx);
 
-// Build a broadcast message packet with raw UTF-8 content. Returns total size.
-uint16_t bc_build_broadcast_message_packet(
+// Build a signed broadcast message packet with raw UTF-8 content.
+uint16_t bc_build_signed_broadcast_packet(
     uint8_t* buf,
     uint16_t buf_sz,
     const uint8_t* sender_id,
-    const char* content);
+    const char* content,
+    BcSignFn sign_fn,
+    void* sign_ctx);
 
 // Build a complete message packet (header + structured payload). Returns total size.
 uint16_t bc_build_message_packet(
