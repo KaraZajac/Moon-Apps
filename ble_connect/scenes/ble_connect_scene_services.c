@@ -82,9 +82,12 @@ bool ble_connect_scene_services_on_event(void* context, SceneManagerEvent event)
             scene_manager_next_scene(app->scene_manager, BleConnectSceneCharacteristics);
             consumed = true;
         }
-    } else if(event.type == SceneManagerEventTypeCustom &&
-              event.event == BleConnectCustomEventDisconnected) {
-        app->connected = false;
+    } else if(event.type == SceneManagerEventTypeBack) {
+        // Back = disconnect and return to start
+        if(app->connected) {
+            gap_disconnect(app->connection_handle);
+            app->connected = false;
+        }
         scene_manager_search_and_switch_to_previous_scene(
             app->scene_manager, BleConnectSceneStart);
         consumed = true;
