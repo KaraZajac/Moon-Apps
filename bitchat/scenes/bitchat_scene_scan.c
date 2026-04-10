@@ -17,6 +17,7 @@ typedef enum {
     ScanPhaseDiscoverServices,
     ScanPhaseDiscoverChars,
     ScanPhaseSubscribe,
+    ScanPhaseAnnounceDelay,
     ScanPhaseDone,
 } ScanPhase;
 
@@ -160,6 +161,31 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
         // Don't return true — let GATT events fall through to check_gatt
         break;
 
+    case ScanPhaseAnnounceDelay:
+        // Wait 200ms (2 ticks at 100ms) before sending announce
+        if(app->tick_count >= 2) {
+            BcAnnounce announce = {0};
+            strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
+            memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
+            announce.has_noise_key = true;
+            memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
+            announce.has_ed25519_key = true;
+
+            uint8_t pkt[BC_PAD_BLOCK_256];
+            uint16_t pkt_len = bc_build_signed_announce_packet(
+                pkt, sizeof(pkt), app->identity.peer_id, &announce,
+                bc_sign_wrapper, &app->identity);
+            if(pkt_len > 0) {
+                FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
+                ble_gatt_client_write(app->connection_handle, app->bc_char_handle, pkt, pkt_len);
+            } else {
+                FURI_LOG_E(TAG, "Failed to build signed announce");
+            }
+
+            scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+        }
+        return true;
+
     default:
         break;
     }
@@ -227,28 +253,11 @@ check_gatt:
     case ScanPhaseSubscribe:
         if(event.event == BitchatCustomEventWriteComplete ||
            event.event == BitchatCustomEventGattError) {
-            // Subscribed (or failed, proceed anyway). Send signed announce.
-            // Android requires ALL three TLV fields: nickname + noise key + ed25519 key
-            BcAnnounce announce = {0};
-            strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
-            memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
-            announce.has_noise_key = true;
-            memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
-            announce.has_ed25519_key = true;
-
-            uint8_t pkt[BC_PAD_BLOCK_256];
-            uint16_t pkt_len = bc_build_signed_announce_packet(
-                pkt, sizeof(pkt), app->identity.peer_id, &announce,
-                bc_sign_wrapper, &app->identity);
-            if(pkt_len > 0) {
-                FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
-                ble_gatt_client_write(app->connection_handle, app->bc_char_handle, pkt, pkt_len);
-            } else {
-                FURI_LOG_E(TAG, "Failed to build signed announce");
-            }
-
-            // Go to chat scene
-            scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+            // Subscribed (or failed). Wait 200ms before sending announce
+            // (Android needs time to map device address to peer)
+            scan_phase = ScanPhaseAnnounceDelay;
+            app->tick_count = 0;
+            popup_set_text(app->popup, "Preparing\nannounce...", 64, 36, AlignCenter, AlignCenter);
             return true;
         }
         break;

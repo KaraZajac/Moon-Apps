@@ -174,8 +174,9 @@ void bitchat_app_free(BitchatApp* app) {
     // Stop timer first — prevent events during cleanup
     furi_timer_stop(app->timer);
 
-    // Clean up BLE callbacks
+    // Clean up BLE callbacks and GATT client
     gap_set_scan_callback(NULL, NULL);
+    ble_gatt_client_deinit(); // Must unregister before profile restore or BLE core hangs
     if(app->scanning) { gap_stop_scanning(); app->scanning = false; }
     app->connected = false;
 
@@ -185,7 +186,7 @@ void bitchat_app_free(BitchatApp* app) {
     bt_disconnect(app->bt);
 
     // Wait for 2nd core to settle before profile swap
-    furi_delay_ms(500);
+    furi_delay_ms(200);
 
     bt_profile_restore_default(app->bt);
 

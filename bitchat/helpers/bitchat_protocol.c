@@ -261,19 +261,22 @@ uint16_t bc_build_message_packet(
 
 uint16_t bc_apply_padding(uint8_t* buf, uint16_t data_len, uint16_t buf_sz) {
     // PKCS#7 padding to nearest block of {256, 512, 1024, 2048}
+    // Android adds +16 for encryption overhead when selecting block size
     static const uint16_t blocks[] = {256, 512, 1024, 2048};
+    uint16_t total_with_overhead = data_len + 16;
     uint16_t target = 0;
     for(int i = 0; i < 4; i++) {
-        if(data_len <= blocks[i]) {
+        if(total_with_overhead <= blocks[i]) {
             target = blocks[i];
             break;
         }
     }
     if(target == 0 || target > buf_sz) return data_len; // too large, skip padding
 
-    uint8_t pad_val = target - data_len;
-    if(pad_val == 0) pad_val = target; // full block of padding if exact fit
-    memset(&buf[data_len], pad_val, target - data_len);
+    uint16_t padding_needed = target - data_len;
+    // PKCS#7: pad value must be 1-255. If 0 or >255, skip padding.
+    if(padding_needed == 0 || padding_needed > 255) return data_len;
+    memset(&buf[data_len], (uint8_t)padding_needed, padding_needed);
     return target;
 }
 
