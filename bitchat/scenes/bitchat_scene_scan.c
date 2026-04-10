@@ -1,5 +1,9 @@
 #include "../bitchat_app_i.h"
 
+static void bc_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig, void* ctx) {
+    bc_identity_sign((const BcIdentity*)ctx, data, len, sig);
+}
+
 #define SCAN_TIMEOUT_MS 10000
 #define CONNECT_TIMEOUT_POLLS 100
 
@@ -223,18 +227,22 @@ check_gatt:
     case ScanPhaseSubscribe:
         if(event.event == BitchatCustomEventWriteComplete ||
            event.event == BitchatCustomEventGattError) {
-            // Subscribed (or failed, proceed anyway). Send our announce.
+            // Subscribed (or failed, proceed anyway). Send signed announce.
             BcAnnounce announce = {0};
             strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
+            // Include our Ed25519 public key in the announce
+            memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
+            announce.has_ed25519_key = true;
 
-            uint8_t pkt[128];
-            uint16_t pkt_len = bc_build_announce_packet(pkt, sizeof(pkt), app->peer_id, &announce);
+            uint8_t pkt[BC_PAD_BLOCK_256];
+            uint16_t pkt_len = bc_build_signed_announce_packet(
+                pkt, sizeof(pkt), app->identity.peer_id, &announce,
+                bc_sign_wrapper, &app->identity);
             if(pkt_len > 0) {
-                FURI_LOG_I(TAG, "Sending announce (%d bytes) to handle 0x%04X",
-                    pkt_len, app->bc_char_handle);
+                FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
                 ble_gatt_client_write(app->connection_handle, app->bc_char_handle, pkt, pkt_len);
             } else {
-                FURI_LOG_E(TAG, "Failed to build announce packet");
+                FURI_LOG_E(TAG, "Failed to build signed announce");
             }
 
             // Go to chat scene

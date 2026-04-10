@@ -48,6 +48,8 @@
 #define BC_MAX_NICKNAME       20
 #define BC_MAX_MSG_CONTENT    200
 #define BC_MAX_PAYLOAD        400
+#define BC_SIGNATURE_SIZE     64
+#define BC_PAD_BLOCK_256      256
 
 // ── Data Structures ──────────────────────────────────────────────────
 
@@ -111,12 +113,33 @@ uint16_t bc_build_announce_packet(
     const uint8_t* sender_id,
     const BcAnnounce* announce);
 
-// Build a complete message packet (header + payload). Returns total size.
+// Build a signed announce packet. sign_fn is called to produce 64-byte signature.
+// Signature is over the packet with ttl=0 and no signature appended.
+typedef void (*BcSignFn)(const uint8_t* data, uint16_t len, uint8_t* sig, void* ctx);
+uint16_t bc_build_signed_announce_packet(
+    uint8_t* buf,
+    uint16_t buf_sz,
+    const uint8_t* sender_id,
+    const BcAnnounce* announce,
+    BcSignFn sign_fn,
+    void* sign_ctx);
+
+// Build a broadcast message packet with raw UTF-8 content. Returns total size.
+uint16_t bc_build_broadcast_message_packet(
+    uint8_t* buf,
+    uint16_t buf_sz,
+    const uint8_t* sender_id,
+    const char* content);
+
+// Build a complete message packet (header + structured payload). Returns total size.
 uint16_t bc_build_message_packet(
     uint8_t* buf,
     uint16_t buf_sz,
     const uint8_t* sender_id,
     const BcMessage* msg);
+
+// Apply PKCS#7 padding to buf. Returns new total size (padded).
+uint16_t bc_apply_padding(uint8_t* buf, uint16_t data_len, uint16_t buf_sz);
 
 // ── Decoding ─────────────────────────────────────────────────────────
 

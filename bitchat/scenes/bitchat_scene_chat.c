@@ -156,15 +156,11 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             rebuild_chat_widget(app);
             return true;
         } else if(event.event == BitchatCustomEventMsgSend) {
-            // User submitted a message from text input
+            // User submitted a message — send as raw UTF-8 broadcast
             if(app->input_buf[0] != '\0' && app->connected) {
-                BcMessage msg = {0};
-                strncpy(msg.sender, app->nickname, BC_MAX_NICKNAME);
-                strncpy(msg.content, app->input_buf, BC_MAX_MSG_CONTENT);
-
-                uint8_t pkt[BC_MAX_PAYLOAD];
-                uint16_t pkt_len = bc_build_message_packet(
-                    pkt, sizeof(pkt), app->peer_id, &msg);
+                uint8_t pkt[BC_PAD_BLOCK_256];
+                uint16_t pkt_len = bc_build_broadcast_message_packet(
+                    pkt, sizeof(pkt), app->identity.peer_id, app->input_buf);
 
                 if(pkt_len > 0) {
                     FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);

@@ -167,6 +167,68 @@ uint16_t bc_build_announce_packet(
     return hdr_len + payload_len;
 }
 
+uint16_t bc_build_signed_announce_packet(
+    uint8_t* buf,
+    uint16_t buf_sz,
+    const uint8_t* sender_id,
+    const BcAnnounce* announce,
+    BcSignFn sign_fn,
+    void* sign_ctx) {
+    // Encode payload
+    uint8_t payload[128];
+    uint16_t payload_len = bc_encode_announce(payload, sizeof(payload), announce);
+    if(payload_len == 0) return 0;
+
+    // Build packet with HAS_SIGNATURE flag
+    uint16_t hdr_len = bc_encode_header(
+        buf, buf_sz, BC_TYPE_ANNOUNCE, BC_DEFAULT_TTL,
+        BC_FLAG_HAS_SIGNATURE, sender_id, payload, payload_len);
+    if(hdr_len == 0) return 0;
+    if(hdr_len + payload_len + BC_SIGNATURE_SIZE > buf_sz) return 0;
+
+    memcpy(&buf[hdr_len], payload, payload_len);
+    uint16_t data_end = hdr_len + payload_len;
+
+    // Build signing data: same packet but with ttl=0 and no signature
+    uint8_t sign_buf[256];
+    memcpy(sign_buf, buf, data_end);
+    sign_buf[2] = 0; // ttl = 0 for signing
+
+    // Sign and append signature
+    uint8_t sig[BC_SIGNATURE_SIZE];
+    sign_fn(sign_buf, data_end, sig, sign_ctx);
+    memcpy(&buf[data_end], sig, BC_SIGNATURE_SIZE);
+
+    uint16_t total = data_end + BC_SIGNATURE_SIZE;
+
+    // Apply PKCS#7 padding
+    total = bc_apply_padding(buf, total, buf_sz);
+    return total;
+}
+
+uint16_t bc_build_broadcast_message_packet(
+    uint8_t* buf,
+    uint16_t buf_sz,
+    const uint8_t* sender_id,
+    const char* content) {
+    // Android expects raw UTF-8 as the payload for broadcast messages
+    uint16_t content_len = strlen(content);
+    if(content_len == 0) return 0;
+
+    uint16_t hdr_len = bc_encode_header(
+        buf, buf_sz, BC_TYPE_MESSAGE, BC_DEFAULT_TTL, 0,
+        sender_id, (const uint8_t*)content, content_len);
+    if(hdr_len == 0) return 0;
+    if(hdr_len + content_len > buf_sz) return 0;
+
+    memcpy(&buf[hdr_len], content, content_len);
+    uint16_t total = hdr_len + content_len;
+
+    // Apply padding
+    total = bc_apply_padding(buf, total, buf_sz);
+    return total;
+}
+
 uint16_t bc_build_message_packet(
     uint8_t* buf,
     uint16_t buf_sz,
@@ -183,6 +245,24 @@ uint16_t bc_build_message_packet(
 
     memcpy(&buf[hdr_len], payload, payload_len);
     return hdr_len + payload_len;
+}
+
+uint16_t bc_apply_padding(uint8_t* buf, uint16_t data_len, uint16_t buf_sz) {
+    // PKCS#7 padding to nearest block of {256, 512, 1024, 2048}
+    static const uint16_t blocks[] = {256, 512, 1024, 2048};
+    uint16_t target = 0;
+    for(int i = 0; i < 4; i++) {
+        if(data_len <= blocks[i]) {
+            target = blocks[i];
+            break;
+        }
+    }
+    if(target == 0 || target > buf_sz) return data_len; // too large, skip padding
+
+    uint8_t pad_val = target - data_len;
+    if(pad_val == 0) pad_val = target; // full block of padding if exact fit
+    memset(&buf[data_len], pad_val, target - data_len);
+    return target;
 }
 
 // ── Decoding ─────────────────────────────────────────────────────────

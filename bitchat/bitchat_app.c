@@ -107,12 +107,6 @@ static uint16_t bitchat_svc_data_callback(BitchatServiceEvent event, void* conte
 
 // ── Alloc / Free ─────────────────────────────────────────────────────
 
-static void generate_random_peer_id(uint8_t* peer_id) {
-    for(int i = 0; i < BC_SENDER_ID_SIZE; i++) {
-        peer_id[i] = rand() & 0xFF;
-    }
-}
-
 BitchatApp* bitchat_app_alloc(void) {
     BitchatApp* app = malloc(sizeof(BitchatApp));
     memset(app, 0, sizeof(BitchatApp));
@@ -149,8 +143,8 @@ BitchatApp* bitchat_app_alloc(void) {
     app->chat_log = furi_string_alloc();
     app->timer = furi_timer_alloc(bitchat_timer_callback, FuriTimerTypePeriodic, app);
 
-    // Generate random peer ID
-    generate_random_peer_id(app->peer_id);
+    // Load or generate Ed25519 identity (keypair + peer ID)
+    bc_identity_load_or_create(&app->identity);
     strncpy(app->nickname, "Flipper", BC_MAX_NICKNAME);
 
     // Start BitChat BLE profile (replaces default Flipper BLE profile)

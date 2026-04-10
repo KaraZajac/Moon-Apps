@@ -23,6 +23,7 @@
 #include "helpers/bitchat_protocol.h"
 #include "helpers/bitchat_service.h"
 #include "helpers/bitchat_profile.h"
+#include "helpers/bitchat_identity.h"
 
 #define TAG "BitChat"
 
@@ -67,9 +68,9 @@ typedef struct BitchatApp {
     Popup* popup;
     Loading* loading;
 
-    // Identity
+    // Identity (Ed25519 keypair + derived peer ID)
+    BcIdentity identity;
     char nickname[BC_MAX_NICKNAME + 1];
-    uint8_t peer_id[BC_SENDER_ID_SIZE]; // derived from random (no real keys in phase 1)
 
     // BLE profile (peripheral side)
     Bt* bt;
