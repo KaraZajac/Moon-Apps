@@ -151,25 +151,44 @@ static void meshtastic_timer_callback(void* context) {
 
 /* Process a decoded FromRadio message */
 void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint16_t len) {
-    if(len == 0) return;
+    if(len < 2) {
+        FURI_LOG_D(TAG, "FromRadio: short read (%d bytes), skipping", len);
+        return; // Empty or too short to be valid protobuf
+    }
 
-    meshtastic_FromRadio msg = meshtastic_FromRadio_init_zero;
+    FURI_LOG_I(TAG, "FromRadio: %d bytes, first: %02X %02X %02X %02X",
+        len, data[0], len > 1 ? data[1] : 0, len > 2 ? data[2] : 0, len > 3 ? data[3] : 0);
+
+    // Allocate on heap — FromRadio struct is too large for the 4KB app stack
+    FURI_LOG_D(TAG, "Allocating FromRadio (%zu bytes)", sizeof(meshtastic_FromRadio));
+    meshtastic_FromRadio* msg = malloc(sizeof(meshtastic_FromRadio));
+    if(!msg) {
+        FURI_LOG_E(TAG, "FromRadio: malloc failed (heap free=%zu)", memmgr_get_free_heap());
+        return;
+    }
+    FURI_LOG_D(TAG, "Allocated, zeroing...");
+    memset(msg, 0, sizeof(meshtastic_FromRadio));
+    FURI_LOG_D(TAG, "Zeroed, decoding...");
     pb_istream_t stream = pb_istream_from_buffer(data, len);
-    if(!pb_decode(&stream, meshtastic_FromRadio_fields, &msg)) {
-        FURI_LOG_E(TAG, "Failed to decode FromRadio: %s", PB_GET_ERROR(&stream));
+    FURI_LOG_D(TAG, "Stream created, calling pb_decode...");
+    bool decode_ok = pb_decode(&stream, meshtastic_FromRadio_fields, msg);
+    FURI_LOG_D(TAG, "pb_decode returned: %d", decode_ok);
+    if(!decode_ok) {
+        FURI_LOG_W(TAG, "Failed to decode FromRadio (%d bytes): %s", len, PB_GET_ERROR(&stream));
+        free(msg);
         return;
     }
 
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
-    switch(msg.which_payload_variant) {
+    switch(msg->which_payload_variant) {
     case meshtastic_FromRadio_my_info_tag: {
-        app->my_node_num = msg.my_info.my_node_num;
+        app->my_node_num = msg->my_info.my_node_num;
         FURI_LOG_I(TAG, "My node num: %lX", app->my_node_num);
         break;
     }
     case meshtastic_FromRadio_node_info_tag: {
-        meshtastic_NodeInfo* ni = &msg.node_info;
+        meshtastic_NodeInfo* ni = &msg->node_info;
         MeshNode* node = meshtastic_find_node(app, ni->num);
         if(!node && app->node_count < MESH_MAX_NODES) {
             node = &app->nodes[app->node_count++];
@@ -200,7 +219,7 @@ void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint
         break;
     }
     case meshtastic_FromRadio_channel_tag: {
-        meshtastic_Channel* ch = &msg.channel;
+        meshtastic_Channel* ch = &msg->channel;
         if(ch->index < MESH_MAX_CHANNELS) {
             MeshChannel* mc = &app->channels[ch->index];
             mc->index = ch->index;
@@ -222,7 +241,7 @@ void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint
         break;
     }
     case meshtastic_FromRadio_packet_tag: {
-        meshtastic_MeshPacket* pkt = &msg.packet;
+        meshtastic_MeshPacket* pkt = &msg->packet;
         // Handle text messages
         if(pkt->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
             meshtastic_Data* decoded = &pkt->decoded;
@@ -272,11 +291,12 @@ void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint
         break;
     }
     default:
-        FURI_LOG_D(TAG, "FromRadio variant: %d", msg.which_payload_variant);
+        FURI_LOG_D(TAG, "FromRadio variant: %d", msg->which_payload_variant);
         break;
     }
 
     furi_mutex_release(app->mutex);
+    free(msg);
 }
 
 bool meshtastic_send_want_config(MeshtasticApp* app) {
@@ -397,8 +417,8 @@ MeshtasticApp* meshtastic_app_alloc(void) {
 void meshtastic_app_free(MeshtasticApp* app) {
     furi_assert(app);
 
-    // BLE cleanup
-    gap_set_fixed_pin(0); // Clear fixed PIN so phone companion isn't affected
+    // BLE cleanup — restore default pairing config for phone companion
+    gap_set_pairing_method(0);
     gap_set_scan_callback(NULL, NULL);
     ble_gatt_client_set_callback(NULL, NULL);
     if(app->state == MeshStateScanning) {

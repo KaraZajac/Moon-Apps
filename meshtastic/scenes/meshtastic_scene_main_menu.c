@@ -90,19 +90,27 @@ bool meshtastic_scene_main_menu_on_event(void* context, SceneManagerEvent event)
                     app->connection_handle, app->char_handles.fromradio_handle);
             }
             return true;
-        case (uint32_t)MeshtasticCustomEventFromRadioReady:
+        case (uint32_t)MeshtasticCustomEventFromRadioReady: {
+            uint8_t* buf = NULL;
+            uint16_t buf_len = 0;
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             if(app->has_read_data && app->read_len > 0) {
-                uint8_t old_msg_count = app->message_count;
-                meshtastic_process_from_radio(app, app->read_buf, app->read_len);
+                buf_len = app->read_len;
+                buf = malloc(buf_len);
+                if(buf) memcpy(buf, app->read_buf, buf_len);
                 app->has_read_data = false;
-                if(app->message_count > old_msg_count) {
-                    // New message received — blink LED
-                    notification_message(app->notifications, &sequence_blink_green_10);
-                }
             }
+            uint8_t old_msg_count = app->message_count;
             furi_mutex_release(app->mutex);
+            if(buf) {
+                meshtastic_process_from_radio(app, buf, buf_len);
+                free(buf);
+            }
+            if(app->message_count > old_msg_count) {
+                notification_message(app->notifications, &sequence_blink_green_10);
+            }
             return true;
+        }
         }
     } else if(event.type == SceneManagerEventTypeBack) {
         furi_timer_stop(app->timer);

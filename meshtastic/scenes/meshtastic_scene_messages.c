@@ -69,19 +69,25 @@ bool meshtastic_scene_messages_on_event(void* context, SceneManagerEvent event) 
             }
             return true;
         } else if(event.event == MeshtasticCustomEventFromRadioReady) {
+            uint8_t* buf = NULL;
+            uint16_t buf_len = 0;
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             if(app->has_read_data && app->read_len > 0) {
-                uint8_t old_count = app->message_count;
-                meshtastic_process_from_radio(app, app->read_buf, app->read_len);
+                buf_len = app->read_len;
+                buf = malloc(buf_len);
+                if(buf) memcpy(buf, app->read_buf, buf_len);
                 app->has_read_data = false;
-                if(app->message_count > old_count) {
-                    furi_mutex_release(app->mutex);
-                    build_message_view(app);
-                    notification_message(app->notifications, &sequence_blink_cyan_10);
-                    return true;
-                }
             }
+            uint8_t old_count = app->message_count;
             furi_mutex_release(app->mutex);
+            if(buf) {
+                meshtastic_process_from_radio(app, buf, buf_len);
+                free(buf);
+            }
+            if(app->message_count > old_count) {
+                build_message_view(app);
+                notification_message(app->notifications, &sequence_blink_cyan_10);
+            }
             return true;
         } else if(event.event == MeshtasticCustomEventTimerTick) {
             // Periodic poll

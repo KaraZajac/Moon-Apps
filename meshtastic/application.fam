@@ -3,7 +3,7 @@ App(
     name="Meshtastic",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="meshtastic_app",
-    stack_size=4 * 1024,
+    stack_size=8 * 1024,
     requires=["gui"],
     fap_libs=["nanopb"],
     cflags=["-Iapplications/external/meshtastic/proto"],

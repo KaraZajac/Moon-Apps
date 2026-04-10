@@ -2,8 +2,8 @@
 
 typedef enum {
     ConnPhaseWaitConnect,
-    ConnPhaseWaitPairing,
-    ConnPhaseWaitGatt,
+    ConnPhasePairing,
+    ConnPhaseGattDiscovery,
 } ConnectPhase;
 
 static ConnectPhase connect_phase;
@@ -38,8 +38,8 @@ void meshtastic_scene_connecting_on_enter(void* context) {
         }
     }
 
-    // Set fixed PIN for Meshtastic pairing (default: 123456)
-    gap_set_fixed_pin(123456);
+    // Configure BLE auth for Meshtastic fixed PIN (legacy pairing)
+    gap_set_pairing_method(123456);
 
     if(!gap_connect(dev->address_type, dev->address)) {
         FURI_LOG_E(TAG, "gap_connect failed");
@@ -57,69 +57,69 @@ bool meshtastic_scene_connecting_on_event(void* context, SceneManagerEvent event
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == MeshtasticCustomEventTimerTick) {
             app->poll_count++;
-
-            // Timeout after 15 seconds
-            if(app->poll_count > 150) {
-                furi_timer_stop(app->timer);
-                FURI_LOG_W(TAG, "Connection/pairing timeout");
-                gap_disconnect(app->connection_handle);
-                app->state = MeshStateIdle;
-                scene_manager_previous_scene(app->scene_manager);
-                return true;
-            }
-
             GapState state = gap_get_state();
 
-            if(connect_phase == ConnPhaseWaitConnect && state == GapStateConnected) {
-                // Step 1: Connected — initiate pairing
-                app->connection_handle = gap_get_connection_handle();
-                FURI_LOG_I(TAG, "Connected (handle=%d), initiating pairing...", app->connection_handle);
-                popup_set_text(app->popup, "Pairing...", 64, 36, AlignCenter, AlignCenter);
-                connect_phase = ConnPhaseWaitPairing;
-                app->poll_count = 0; // Reset timeout for pairing phase
-
-                if(!gap_pair(app->connection_handle, true)) {
-                    FURI_LOG_W(TAG, "Pairing request failed, trying GATT discovery anyway");
-                    // Some devices don't need explicit pairing — try GATT directly
-                    connect_phase = ConnPhaseWaitGatt;
-                    app->state = MeshStateReceivingConfig;
-                    ble_gatt_client_discover_services(app->connection_handle);
-                }
+            // Overall timeout: 20 seconds
+            if(app->poll_count > 200) {
+                furi_timer_stop(app->timer);
+                FURI_LOG_W(TAG, "Timeout in phase %d", connect_phase);
+                if(state == GapStateConnected) gap_disconnect(app->connection_handle);
+                app->state = MeshStateIdle;
+                scene_manager_previous_scene(app->scene_manager);
                 return true;
             }
 
-            if(connect_phase == ConnPhaseWaitPairing && state == GapStateConnected) {
-                // Step 2: Wait for pairing to complete, then try GATT
-                // Pairing complete is signaled by ACI_GAP_PAIRING_COMPLETE event
-                // which the GAP layer handles. After ~2 seconds, try GATT discovery.
-                if(app->poll_count > 20) {
-                    FURI_LOG_I(TAG, "Pairing wait done, discovering services...");
-                    popup_set_text(app->popup, "Discovering...", 64, 36, AlignCenter, AlignCenter);
-                    connect_phase = ConnPhaseWaitGatt;
-                    app->state = MeshStateReceivingConfig;
-                    app->poll_count = 0;
-                    ble_gatt_client_discover_services(app->connection_handle);
-                }
-                return true;
-            }
-
-            if(connect_phase == ConnPhaseWaitPairing && state != GapStateConnected) {
-                // Pairing failed — disconnected
-                FURI_LOG_E(TAG, "Disconnected during pairing");
+            // Detect disconnect
+            if(state != GapStateConnected && connect_phase != ConnPhaseWaitConnect) {
+                FURI_LOG_E(TAG, "Disconnected during phase %d", connect_phase);
                 furi_timer_stop(app->timer);
                 app->state = MeshStateIdle;
                 scene_manager_previous_scene(app->scene_manager);
+                return true;
+            }
+
+            if(connect_phase == ConnPhaseWaitConnect && state == GapStateConnected) {
+                // Just connected — wait 500ms, then send pairing request
+                app->connection_handle = gap_get_connection_handle();
+                FURI_LOG_I(TAG, "Connected (handle=%d)", app->connection_handle);
+                popup_set_text(app->popup, "Pairing...", 64, 36, AlignCenter, AlignCenter);
+                connect_phase = ConnPhasePairing;
+                app->poll_count = 0;
+                // Small delay before pairing
+                return true;
+            }
+
+            if(connect_phase == ConnPhasePairing) {
+                if(app->poll_count == 5) {
+                    // 500ms after connect — send pairing request
+                    FURI_LOG_I(TAG, "Sending pairing request...");
+                    gap_pair(app->connection_handle, false);
+                }
+                if(app->poll_count == 20) {
+                    // 2 seconds after pairing — negotiate MTU
+                    FURI_LOG_I(TAG, "Requesting MTU exchange...");
+                    ble_gatt_client_exchange_mtu(app->connection_handle);
+                }
+                if(app->poll_count >= 30) {
+                    // 3 seconds after pairing — try GATT
+                    FURI_LOG_I(TAG, "Pairing + MTU done, trying GATT...");
+                    popup_set_text(app->popup, "Discovering...", 64, 36, AlignCenter, AlignCenter);
+                    connect_phase = ConnPhaseGattDiscovery;
+                    app->poll_count = 0;
+                    app->state = MeshStateReceivingConfig;
+                    ble_gatt_client_discover_services(app->connection_handle);
+                }
                 return true;
             }
 
             return true;
         } else if(event.event == MeshtasticCustomEventConnected) {
-            // GATT characteristics discovered — start config
+            // GATT chars discovered
             furi_timer_stop(app->timer);
             if(app->char_handles.all_found) {
-                FURI_LOG_I(TAG, "Meshtastic chars found, requesting config");
-                ble_gatt_client_subscribe_notifications(
-                    app->connection_handle, app->char_handles.fromnum_handle, true);
+                FURI_LOG_I(TAG, "Meshtastic chars found, sending want_config");
+                // Only send want_config first — don't subscribe or read yet
+                // The config_receive scene will handle the rest after this completes
                 meshtastic_send_want_config(app);
                 scene_manager_next_scene(app->scene_manager, MeshtasticSceneConfigReceive);
             } else {
@@ -130,14 +130,11 @@ bool meshtastic_scene_connecting_on_event(void* context, SceneManagerEvent event
             }
             return true;
         } else if(event.event == MeshtasticCustomEventGattError) {
-            if(connect_phase == ConnPhaseWaitGatt) {
-                // GATT failed after pairing — might need longer wait
-                FURI_LOG_E(TAG, "GATT error after pairing");
-                furi_timer_stop(app->timer);
-                gap_disconnect(app->connection_handle);
-                app->state = MeshStateIdle;
-                scene_manager_previous_scene(app->scene_manager);
-            }
+            FURI_LOG_E(TAG, "GATT discovery failed");
+            furi_timer_stop(app->timer);
+            gap_disconnect(app->connection_handle);
+            app->state = MeshStateIdle;
+            scene_manager_previous_scene(app->scene_manager);
             return true;
         }
     }
