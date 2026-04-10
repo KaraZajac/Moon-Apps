@@ -398,6 +398,7 @@ void meshtastic_app_free(MeshtasticApp* app) {
     furi_assert(app);
 
     // BLE cleanup
+    gap_set_fixed_pin(0); // Clear fixed PIN so phone companion isn't affected
     gap_set_scan_callback(NULL, NULL);
     ble_gatt_client_set_callback(NULL, NULL);
     if(app->state == MeshStateScanning) {
