@@ -1,8 +1,9 @@
 #pragma once
 
+/* Start at 0x100 to avoid colliding with submenu indices (0-0xFF) */
 typedef enum {
     // Scan/Connect
-    MeshtasticCustomEventTimerTick,
+    MeshtasticCustomEventTimerTick = 0x100,
     MeshtasticCustomEventConnected,
     MeshtasticCustomEventConnectFailed,
     MeshtasticCustomEventDisconnected,
