@@ -1,0 +1,19 @@
+#ifndef __OPTIONS_H__
+#define __OPTIONS_H__
+
+#define USE_PRECOMPUTED_CP 0
+#define USE_INVERSE_FAST 1
+#define USE_BN_PRINT 0
+#define USE_RFC6979 0
+#define USE_BIP32_CACHE 0
+#define USE_BIP32_25519_CURVES 0
+#define USE_BIP39_CACHE 0
+#define USE_ETHEREUM 0
+#define USE_NEM 0
+#define USE_MONERO 0
+#define USE_CARDANO 0
+#define USE_KECCAK 0
+#define CONFIDENTIAL
+#define USE_FLIPPER_HAL_RANDOM 1
+
+#endif
