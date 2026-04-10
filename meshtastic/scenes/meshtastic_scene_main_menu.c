@@ -1,6 +1,7 @@
 #include "../meshtastic_app_i.h"
 
 enum {
+    MeshtasticMainSendMessage,
     MeshtasticMainMessages,
     MeshtasticMainNodes,
     MeshtasticMainChannels,
@@ -18,9 +19,16 @@ void meshtastic_scene_main_menu_on_enter(void* context) {
     submenu_reset(app->submenu);
 
     char header[48];
-    snprintf(header, sizeof(header), "Mesh: %d nodes", app->node_count);
+    if(app->my_long_name[0]) {
+        snprintf(header, sizeof(header), "Mesh: %s", app->my_long_name);
+    } else {
+        snprintf(header, sizeof(header), "Mesh: %d nodes", app->node_count);
+    }
     submenu_set_header(app->submenu, header);
 
+    submenu_add_item(
+        app->submenu, "Send Message", MeshtasticMainSendMessage,
+        meshtastic_scene_main_menu_callback, app);
     submenu_add_item(
         app->submenu, "Messages", MeshtasticMainMessages,
         meshtastic_scene_main_menu_callback, app);
@@ -38,6 +46,9 @@ void meshtastic_scene_main_menu_on_enter(void* context) {
         meshtastic_scene_main_menu_callback, app);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, MeshtasticViewSubmenu);
+
+    // Start polling for incoming messages while on menu
+    furi_timer_start(app->timer, 2000);
 }
 
 bool meshtastic_scene_main_menu_on_event(void* context, SceneManagerEvent event) {
@@ -45,50 +56,67 @@ bool meshtastic_scene_main_menu_on_event(void* context, SceneManagerEvent event)
 
     if(event.type == SceneManagerEventTypeCustom) {
         switch(event.event) {
+        case MeshtasticMainSendMessage:
+            furi_timer_stop(app->timer);
+            scene_manager_next_scene(app->scene_manager, MeshtasticSceneSendMessage);
+            return true;
         case MeshtasticMainMessages:
+            furi_timer_stop(app->timer);
             scene_manager_next_scene(app->scene_manager, MeshtasticSceneMessages);
             return true;
         case MeshtasticMainNodes:
+            furi_timer_stop(app->timer);
             scene_manager_next_scene(app->scene_manager, MeshtasticSceneNodes);
             return true;
         case MeshtasticMainChannels:
+            furi_timer_stop(app->timer);
             scene_manager_next_scene(app->scene_manager, MeshtasticSceneChannels);
             return true;
         case MeshtasticMainDeviceInfo:
+            furi_timer_stop(app->timer);
             scene_manager_next_scene(app->scene_manager, MeshtasticSceneDeviceInfo);
             return true;
         case MeshtasticMainDisconnect:
+            furi_timer_stop(app->timer);
             gap_disconnect(app->connection_handle);
             app->state = MeshStateIdle;
             scene_manager_search_and_switch_to_previous_scene(
                 app->scene_manager, MeshtasticSceneStart);
             return true;
+        case (uint32_t)MeshtasticCustomEventTimerTick:
+            // Poll for new messages in background
+            if(app->char_handles.fromradio_handle && app->state == MeshStateReady) {
+                ble_gatt_client_read(
+                    app->connection_handle, app->char_handles.fromradio_handle);
+            }
+            return true;
+        case (uint32_t)MeshtasticCustomEventFromRadioReady:
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            if(app->has_read_data && app->read_len > 0) {
+                uint8_t old_msg_count = app->message_count;
+                meshtastic_process_from_radio(app, app->read_buf, app->read_len);
+                app->has_read_data = false;
+                if(app->message_count > old_msg_count) {
+                    // New message received — blink LED
+                    notification_message(app->notifications, &sequence_blink_green_10);
+                }
+            }
+            furi_mutex_release(app->mutex);
+            return true;
         }
     } else if(event.type == SceneManagerEventTypeBack) {
-        // Back = disconnect
+        furi_timer_stop(app->timer);
         gap_disconnect(app->connection_handle);
         app->state = MeshStateIdle;
         scene_manager_search_and_switch_to_previous_scene(
             app->scene_manager, MeshtasticSceneStart);
         return true;
     }
-
-    // Handle incoming messages while on menu
-    if(event.type == SceneManagerEventTypeCustom &&
-       event.event == MeshtasticCustomEventFromRadioReady) {
-        furi_mutex_acquire(app->mutex, FuriWaitForever);
-        if(app->has_read_data && app->read_len > 0) {
-            meshtastic_process_from_radio(app, app->read_buf, app->read_len);
-            app->has_read_data = false;
-        }
-        furi_mutex_release(app->mutex);
-        return true;
-    }
-
     return false;
 }
 
 void meshtastic_scene_main_menu_on_exit(void* context) {
     MeshtasticApp* app = context;
+    furi_timer_stop(app->timer);
     submenu_reset(app->submenu);
 }

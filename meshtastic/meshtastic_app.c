@@ -179,6 +179,12 @@ void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint
             if(ni->has_user) {
                 strlcpy(node->short_name, ni->user.short_name, sizeof(node->short_name));
                 strlcpy(node->long_name, ni->user.long_name, sizeof(node->long_name));
+                // If this is our own node, save our name
+                if(ni->num == app->my_node_num) {
+                    strlcpy(app->my_short_name, ni->user.short_name, sizeof(app->my_short_name));
+                    strlcpy(app->my_long_name, ni->user.long_name, sizeof(app->my_long_name));
+                    FURI_LOG_I(TAG, "My name: %s (%s)", app->my_long_name, app->my_short_name);
+                }
             }
             node->snr = (int8_t)ni->snr;
             node->last_heard = ni->last_heard;
