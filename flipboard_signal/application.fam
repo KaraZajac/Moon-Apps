@@ -4,6 +4,7 @@ App(
     apptype=FlipperAppType.EXTERNAL,
     sources=[
         "*.c",
+        "api/*.cpp",
     ],
     entry_point="flipboard_signal_app",
     stack_size=4 * 1024,
