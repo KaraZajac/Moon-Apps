@@ -89,6 +89,10 @@ static void bitchat_timer_callback(void* context) {
     view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventTick);
 }
 
+static void bc_app_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig, void* ctx) {
+    bc_identity_sign((const BcIdentity*)ctx, data, len, sig);
+}
+
 // ── Peripheral service callback (data received from phone) ───────────
 
 static uint16_t bitchat_svc_data_callback(BitchatServiceEvent event, void* context) {
@@ -100,6 +104,12 @@ static uint16_t bitchat_svc_data_callback(BitchatServiceEvent event, void* conte
             app->rx_len = event.data.size;
             view_dispatcher_send_custom_event(
                 app->view_dispatcher, BitchatCustomEventNotification);
+        }
+    } else if(event.event == BitchatServiceEventPeerSubscribed) {
+        // Peer subscribed to our notifications — immediately send announce
+        if(app->announce_pkt_len > 0 && app->svc) {
+            FURI_LOG_I(TAG, "Sending announce to new subscriber (%d bytes)", app->announce_pkt_len);
+            ble_svc_bitchat_tx(app->svc, app->announce_pkt, app->announce_pkt_len);
         }
     }
     return 512;
@@ -159,11 +169,24 @@ BitchatApp* bitchat_app_alloc(void) {
         app->ble_profile, 512, bitchat_svc_data_callback, app);
     app->svc = ble_profile_bitchat_get_service(app->ble_profile);
 
+    // Pre-build signed announce packet (sent immediately when peers subscribe)
+    {
+        BcAnnounce announce = {0};
+        strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
+        memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
+        announce.has_noise_key = true;
+        memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
+        announce.has_ed25519_key = true;
+
+        app->announce_pkt_len = bc_build_signed_announce_packet(
+            app->announce_pkt, sizeof(app->announce_pkt),
+            app->identity.peer_id, &announce,
+            bc_app_sign_wrapper, &app->identity);
+        FURI_LOG_I(TAG, "Pre-built announce: %d bytes", app->announce_pkt_len);
+    }
+
     // Start advertising
     furi_hal_bt_start_advertising();
-
-    // NOTE: GATT client init is deferred to scan scene to avoid
-    // conflicting with profile lifecycle during shutdown
 
     FURI_LOG_I(TAG, "BitChat profile active, advertising started");
 

@@ -177,7 +177,14 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
                 bc_sign_wrapper, &app->identity);
             if(pkt_len > 0) {
                 FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
+                // Send as GATT write to phone's characteristic (central side)
                 ble_gatt_client_write(app->connection_handle, app->bc_char_handle, pkt, pkt_len);
+                // Also send as notification from our service (peripheral side)
+                // Phone connects to us as central and expects notifications
+                if(app->svc) {
+                    FURI_LOG_I(TAG, "Also notifying via peripheral service");
+                    ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+                }
             } else {
                 FURI_LOG_E(TAG, "Failed to build signed announce");
             }

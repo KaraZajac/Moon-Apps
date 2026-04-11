@@ -12,6 +12,7 @@ extern "C" {
 typedef enum {
     BitchatServiceEventDataReceived,
     BitchatServiceEventDataSent,
+    BitchatServiceEventPeerSubscribed, // A peer subscribed to our notifications
 } BitchatServiceEventType;
 
 typedef struct {

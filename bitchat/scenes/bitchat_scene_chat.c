@@ -5,6 +5,28 @@ static void bc_chat_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig
     bc_identity_sign((const BcIdentity*)ctx, data, len, sig);
 }
 
+static uint32_t announce_tick_counter = 0;
+#define ANNOUNCE_INTERVAL_TICKS 8 // Re-announce every 4 seconds (8 * 500ms)
+
+static void send_announce_via_service(BitchatApp* app) {
+    if(!app->svc) return;
+
+    BcAnnounce announce = {0};
+    strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
+    memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
+    announce.has_noise_key = true;
+    memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
+    announce.has_ed25519_key = true;
+
+    uint8_t pkt[256];
+    uint16_t pkt_len = bc_build_signed_announce_packet(
+        pkt, sizeof(pkt), app->identity.peer_id, &announce,
+        bc_chat_sign_wrapper, &app->identity);
+    if(pkt_len > 0) {
+        ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+    }
+}
+
 static void process_incoming_packet(BitchatApp* app) {
     // Ignore empty notifications (keepalive/subscription confirmations)
     if(app->rx_len == 0) return;
@@ -152,6 +174,12 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
 
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == BitchatCustomEventTick) {
+            // Periodic re-announce via peripheral service (every 4s)
+            announce_tick_counter++;
+            if(announce_tick_counter >= ANNOUNCE_INTERVAL_TICKS) {
+                announce_tick_counter = 0;
+                send_announce_via_service(app);
+            }
             // Refresh chat display
             rebuild_chat_widget(app);
             return true;

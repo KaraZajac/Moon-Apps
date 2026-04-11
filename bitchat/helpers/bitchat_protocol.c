@@ -201,8 +201,8 @@ uint16_t bc_build_signed_announce_packet(
 
     uint16_t total = data_end + BC_SIGNATURE_SIZE;
 
-    // Apply PKCS#7 padding
-    total = bc_apply_padding(buf, total, buf_sz);
+    // Skip padding — aci_gatt_write_char_value max is ~247 bytes,
+    // padded 256-byte packets get truncated. Android handles unpadded.
     return total;
 }
 
@@ -237,7 +237,7 @@ uint16_t bc_build_signed_broadcast_packet(
     memcpy(&buf[data_end], sig, BC_SIGNATURE_SIZE);
 
     uint16_t total = data_end + BC_SIGNATURE_SIZE;
-    total = bc_apply_padding(buf, total, buf_sz);
+    // Skip padding — BLE write limit ~247 bytes, Android handles unpadded
     return total;
 }
 

@@ -104,6 +104,10 @@ typedef struct BitchatApp {
     BleGattCharacteristic chars[BLE_GATT_CLIENT_MAX_CHARS];
     uint8_t char_count;
 
+    // Pre-built signed announce packet (sent on peer subscribe)
+    uint8_t announce_pkt[256];
+    uint16_t announce_pkt_len;
+
     // Receive buffer
     uint8_t rx_buf[512];
     uint16_t rx_len;

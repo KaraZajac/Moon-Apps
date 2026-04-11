@@ -67,7 +67,16 @@ static BleEventAckStatus bitchat_event_handler(void* event, void* context) {
 
         // CCCD write (subscribe/unsubscribe to notifications)
         if(attr_mod->Attr_Handle == svc->chars[0].handle + 2) {
-            FURI_LOG_D(TAG, "CCCD write: %d bytes", attr_mod->Attr_Data_Length);
+            FURI_LOG_I(TAG, "CCCD write: %d bytes", attr_mod->Attr_Data_Length);
+            if(attr_mod->Attr_Data_Length == 2) {
+                uint16_t cccd_val = attr_mod->Attr_Data[0] | (attr_mod->Attr_Data[1] << 8);
+                if(cccd_val == 1 && svc->callback) {
+                    // Peer subscribed to notifications — notify app to send announce
+                    FURI_LOG_I(TAG, "Peer subscribed, sending announce event");
+                    BitchatServiceEvent evt = {.event = BitchatServiceEventPeerSubscribed};
+                    svc->callback(evt, svc->context);
+                }
+            }
             ret = BleEventAckFlowEnable;
         }
         // Characteristic value write (incoming data from peer)
