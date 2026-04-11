@@ -6,7 +6,7 @@ static void bc_chat_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig
 }
 
 static uint32_t announce_tick_counter = 0;
-#define ANNOUNCE_INTERVAL_TICKS 8 // Re-announce every 4 seconds (8 * 500ms)
+#define ANNOUNCE_INTERVAL_TICKS 60 // Re-announce every 30 seconds (60 * 500ms) — less frequent to avoid GATT conflicts
 
 static void send_announce_via_service(BitchatApp* app) {
     if(!app->svc) return;

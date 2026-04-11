@@ -57,14 +57,14 @@ void bitchat_gatt_callback(BleGattClientEvent* event, void* context) {
         view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventWriteComplete);
         break;
     case BleGattClientEventNotification:
-        // Received data from a peer (central side - notification from phone)
-        FURI_LOG_I(TAG, "GATT notification: %d bytes from central connection",
-            event->notification.data_len);
-        if(event->notification.data_len <= sizeof(app->rx_buf)) {
+        // Notification from phone's characteristic (central side)
+        if(event->notification.data_len > 0 && event->notification.data_len <= sizeof(app->rx_buf)) {
+            FURI_LOG_I(TAG, "GATT notif: %d bytes", event->notification.data_len);
             memcpy(app->rx_buf, event->notification.data, event->notification.data_len);
             app->rx_len = event->notification.data_len;
+            view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventNotification);
         }
-        view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventNotification);
+        // Ignore 0-byte notifications (subscription confirmations / keepalives)
         break;
     case BleGattClientEventError:
         view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventGattError);
