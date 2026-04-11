@@ -79,8 +79,14 @@ static BleEventAckStatus bitchat_event_handler(void* event, void* context) {
             }
             ret = BleEventAckFlowEnable;
         }
+        // Any other attribute modification — log for debugging
+        else if(attr_mod->Attr_Handle != svc->chars[0].handle + 1) {
+            FURI_LOG_W(TAG, "Unknown attr write: handle=0x%04X (%d bytes), expected 0x%04X",
+                attr_mod->Attr_Handle, attr_mod->Attr_Data_Length,
+                svc->chars[0].handle + 1);
+        }
         // Characteristic value write (incoming data from peer)
-        else if(attr_mod->Attr_Handle == svc->chars[0].handle + 1) {
+        if(attr_mod->Attr_Handle == svc->chars[0].handle + 1) {
             FURI_LOG_I(TAG, "RX %d bytes from peer", attr_mod->Attr_Data_Length);
 
             if(svc->callback) {

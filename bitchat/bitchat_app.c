@@ -1,4 +1,5 @@
 #include "bitchat_app_i.h"
+#include "crypto/ed25519_donna/ed25519.h"
 
 static bool bitchat_custom_event_callback(void* ctx, uint32_t event) {
     return scene_manager_handle_custom_event(((BitchatApp*)ctx)->scene_manager, event);
@@ -56,7 +57,9 @@ void bitchat_gatt_callback(BleGattClientEvent* event, void* context) {
         view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventWriteComplete);
         break;
     case BleGattClientEventNotification:
-        // Received data from a peer
+        // Received data from a peer (central side - notification from phone)
+        FURI_LOG_I(TAG, "GATT notification: %d bytes from central connection",
+            event->notification.data_len);
         if(event->notification.data_len <= sizeof(app->rx_buf)) {
             memcpy(app->rx_buf, event->notification.data, event->notification.data_len);
             app->rx_len = event->notification.data_len;
@@ -156,6 +159,20 @@ BitchatApp* bitchat_app_alloc(void) {
     // Load or generate Ed25519 identity (keypair + peer ID)
     bc_identity_load_or_create(&app->identity);
     strncpy(app->nickname, "Flipper", BC_MAX_NICKNAME);
+
+    // Self-test: verify our Ed25519 implementation produces valid signatures
+    {
+        uint8_t test_msg[] = "BitChat self-test";
+        uint8_t test_sig[64];
+        bc_identity_sign(&app->identity, test_msg, sizeof(test_msg) - 1, test_sig);
+        int verify_result = ed25519_sign_open(
+            test_msg, sizeof(test_msg) - 1,
+            app->identity.ed25519_public, test_sig);
+        FURI_LOG_I(TAG, "Ed25519 self-test: %s", verify_result == 0 ? "PASS" : "FAIL");
+        if(verify_result != 0) {
+            FURI_LOG_E(TAG, "Ed25519 signatures will not verify!");
+        }
+    }
 
     // Start BitChat BLE profile (replaces default Flipper BLE profile)
     // This registers our GATT service and advertises the BitChat UUID

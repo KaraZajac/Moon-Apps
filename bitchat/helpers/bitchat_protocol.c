@@ -1,5 +1,6 @@
 #include "bitchat_protocol.h"
 #include <string.h>
+#include <furi.h>
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -189,20 +190,32 @@ uint16_t bc_build_signed_announce_packet(
     memcpy(&buf[hdr_len], payload, payload_len);
     uint16_t data_end = hdr_len + payload_len;
 
-    // Build signing data: same packet but with ttl=0 and no signature
-    uint8_t sign_buf[256];
-    memcpy(sign_buf, buf, data_end);
-    sign_buf[2] = 0; // ttl = 0 for signing
+    // Build signing data: re-encode packet with ttl=0 and NO HAS_SIGNATURE flag
+    // Android's toBinaryDataForSigning() creates a new packet with signature=null,
+    // which clears the HAS_SIGNATURE bit in flags, then encodes + pads it.
+    uint8_t sign_buf[BC_PAD_BLOCK_256];
 
-    // Sign and append signature
+    // Re-encode header WITHOUT HAS_SIGNATURE flag, with ttl=0
+    uint16_t sign_hdr_len = bc_encode_header(
+        sign_buf, sizeof(sign_buf), BC_TYPE_ANNOUNCE, 0 /* ttl=0 */,
+        0 /* no flags — HAS_SIGNATURE cleared */, sender_id, payload, payload_len);
+    memcpy(&sign_buf[sign_hdr_len], payload, payload_len);
+    uint16_t sign_data_len = sign_hdr_len + payload_len;
+
+    // Apply PKCS#7 padding — Android signs over the PADDED data
+    sign_data_len = bc_apply_padding(sign_buf, sign_data_len, sizeof(sign_buf));
+
+    FURI_LOG_I("BcProto", "Signing %d bytes (ttl=0, no HAS_SIG, padded):", sign_data_len);
+    FURI_LOG_I("BcProto", "  flags=0x%02X pad_to=%d", sign_buf[11], sign_data_len);
+
+    // Sign the padded data
     uint8_t sig[BC_SIGNATURE_SIZE];
-    sign_fn(sign_buf, data_end, sig, sign_ctx);
+    sign_fn(sign_buf, sign_data_len, sig, sign_ctx);
+
+    // Append signature to the ORIGINAL packet (which has HAS_SIGNATURE set, real ttl)
     memcpy(&buf[data_end], sig, BC_SIGNATURE_SIZE);
 
     uint16_t total = data_end + BC_SIGNATURE_SIZE;
-
-    // Skip padding — aci_gatt_write_char_value max is ~247 bytes,
-    // padded 256-byte packets get truncated. Android handles unpadded.
     return total;
 }
 
@@ -226,14 +239,17 @@ uint16_t bc_build_signed_broadcast_packet(
     memcpy(&buf[hdr_len], content, content_len);
     uint16_t data_end = hdr_len + content_len;
 
-    // Sign with ttl=0
-    uint8_t sign_buf[256];
-    if(data_end > sizeof(sign_buf)) return 0;
-    memcpy(sign_buf, buf, data_end);
-    sign_buf[2] = 0; // ttl = 0 for signing
+    // Build signing data: re-encode with ttl=0, no HAS_SIGNATURE, padded
+    uint8_t sign_buf[BC_PAD_BLOCK_256];
+    uint16_t sign_hdr_len = bc_encode_header(
+        sign_buf, sizeof(sign_buf), BC_TYPE_MESSAGE, 0,
+        0, sender_id, (const uint8_t*)content, content_len);
+    memcpy(&sign_buf[sign_hdr_len], content, content_len);
+    uint16_t sign_data_len = sign_hdr_len + content_len;
+    sign_data_len = bc_apply_padding(sign_buf, sign_data_len, sizeof(sign_buf));
 
     uint8_t sig[BC_SIGNATURE_SIZE];
-    sign_fn(sign_buf, data_end, sig, sign_ctx);
+    sign_fn(sign_buf, sign_data_len, sig, sign_ctx);
     memcpy(&buf[data_end], sig, BC_SIGNATURE_SIZE);
 
     uint16_t total = data_end + BC_SIGNATURE_SIZE;
