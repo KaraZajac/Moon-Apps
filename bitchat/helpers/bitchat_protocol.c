@@ -1,6 +1,7 @@
 #include "bitchat_protocol.h"
 #include <string.h>
 #include <furi.h>
+#include <momentum/settings.h>
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -28,8 +29,12 @@ static uint64_t get_u64_be(const uint8_t* buf) {
 
 static uint64_t bc_timestamp_now(void) {
     // Unix timestamp in milliseconds (Android uses System.currentTimeMillis())
+    // Flipper RTC stores local time, so we apply the UTC offset from settings
     extern uint32_t furi_hal_rtc_get_timestamp(void);
-    return (uint64_t)furi_hal_rtc_get_timestamp() * 1000ULL;
+    uint32_t local_ts = furi_hal_rtc_get_timestamp();
+    // utc_offset_hours: e.g. -4 for EDT means local is UTC-4, so UTC = local + 4 hours
+    int32_t offset_seconds = -momentum_settings.utc_offset_hours * 3600;
+    return ((uint64_t)local_ts + offset_seconds) * 1000ULL;
 }
 
 // ── Encoding ─────────────────────────────────────────────────────────
