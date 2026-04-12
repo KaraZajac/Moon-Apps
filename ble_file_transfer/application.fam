@@ -1,0 +1,13 @@
+App(
+    appid="ble_file_transfer",
+    name="BLE File Transfer",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="ble_file_transfer_app",
+    stack_size=4 * 1024,
+    requires=["gui", "storage", "dialogs"],
+    fap_category="Bluetooth",
+    fap_icon="icon.png",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Transfer files between Flipper Zeros over Bluetooth using L2CAP CoC for high-speed data transfer (50-100 KB/s).",
+)

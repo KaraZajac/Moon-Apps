@@ -1,0 +1,5 @@
+ADD_SCENE(ft, start, Start)
+ADD_SCENE(ft, receive, Receive)
+ADD_SCENE(ft, send_browse, SendBrowse)
+ADD_SCENE(ft, send_scan, SendScan)
+ADD_SCENE(ft, transfer, Transfer)
