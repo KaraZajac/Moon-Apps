@@ -92,11 +92,23 @@ static void process_incoming_packet(BitchatApp* app) {
         break;
     }
     case BC_TYPE_MESSAGE: {
-        BcMessage msg;
-        if(bc_decode_message(payload, payload_len, &msg)) {
-            FURI_LOG_I(TAG, "Message from %s: %s", msg.sender, msg.content);
+        // Android sends raw UTF-8 as the payload for broadcast messages
+        if(payload_len > 0 && payload_len <= BC_MAX_MSG_CONTENT) {
+            char content[BC_MAX_MSG_CONTENT + 1];
+            memcpy(content, payload, payload_len);
+            content[payload_len] = '\0';
+
+            // Look up sender nickname from peer list
+            const char* sender = "unknown";
             furi_mutex_acquire(app->mutex, FuriWaitForever);
-            bitchat_add_chat_message(app, msg.sender, msg.content);
+            for(uint8_t i = 0; i < app->peer_count; i++) {
+                if(memcmp(app->peers[i].peer_id, hdr.sender_id, BC_SENDER_ID_SIZE) == 0) {
+                    sender = app->peers[i].nickname;
+                    break;
+                }
+            }
+            FURI_LOG_I(TAG, "Message from %s: %s", sender, content);
+            bitchat_add_chat_message(app, sender, content);
             furi_mutex_release(app->mutex);
             notification_message(app->notifications, &sequence_single_vibro);
         }

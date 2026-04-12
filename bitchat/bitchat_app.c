@@ -56,16 +56,34 @@ void bitchat_gatt_callback(BleGattClientEvent* event, void* context) {
     case BleGattClientEventWriteComplete:
         view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventWriteComplete);
         break;
-    case BleGattClientEventNotification:
-        // Notification from phone's characteristic (central side)
-        if(event->notification.data_len > 0 && event->notification.data_len <= sizeof(app->rx_buf)) {
-            FURI_LOG_I(TAG, "GATT notif: %d bytes", event->notification.data_len);
-            memcpy(app->rx_buf, event->notification.data, event->notification.data_len);
-            app->rx_len = event->notification.data_len;
+    case BleGattClientEventNotification: {
+        uint16_t offset = event->notification.offset;
+        uint16_t len = event->notification.data_len;
+        bool is_first = (offset & 0x8000) != 0;
+        uint16_t real_offset = offset & 0x7FFF;
+
+        if(len == 0) break; // ignore empty notifications
+
+        if(is_first) {
+            // First fragment — start reassembly
+            app->rx_len = 0;
+        }
+
+        // Append fragment at correct offset
+        if(real_offset + len <= sizeof(app->rx_buf)) {
+            memcpy(&app->rx_buf[real_offset], event->notification.data, len);
+            uint16_t end = real_offset + len;
+            if(end > app->rx_len) app->rx_len = end;
+        }
+
+        if(!is_first && app->rx_len > 0) {
+            // Last fragment received — process complete packet
+            FURI_LOG_I(TAG, "Reassembled %d bytes, first: %02X %02X %02X %02X",
+                app->rx_len, app->rx_buf[0], app->rx_buf[1], app->rx_buf[2], app->rx_buf[3]);
             view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventNotification);
         }
-        // Ignore 0-byte notifications (subscription confirmations / keepalives)
         break;
+    }
     case BleGattClientEventError:
         view_dispatcher_send_custom_event(app->view_dispatcher, BitchatCustomEventGattError);
         break;

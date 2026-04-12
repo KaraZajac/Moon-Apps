@@ -59,36 +59,53 @@ static BleEventAckStatus bitchat_event_handler(void* event, void* context) {
     hci_event_pckt* event_pckt = (hci_event_pckt*)(((hci_uart_pckt*)event)->data);
     evt_blecore_aci* blecore_evt = (evt_blecore_aci*)event_pckt->data;
 
+    // Log ALL vendor-specific events for debugging
+    if(event_pckt->evt == HCI_VENDOR_SPECIFIC_DEBUG_EVT_CODE) {
+        // Log event code for any unhandled events
+        if(blecore_evt->ecode != ACI_GATT_ATTRIBUTE_MODIFIED_VSEVT_CODE &&
+           blecore_evt->ecode != ACI_GATT_SERVER_CONFIRMATION_VSEVT_CODE &&
+           blecore_evt->ecode != 0x0C01 && // proc complete (handled by gatt_client)
+           blecore_evt->ecode != 0x0C02 && // error resp
+           blecore_evt->ecode != 0x0C07 && // notification (handled by gatt_client)
+           blecore_evt->ecode != 0x0C04 && // read by type resp
+           blecore_evt->ecode != 0x0C02) { // read by group type resp
+            FURI_LOG_D(TAG, "VS event: 0x%04X", blecore_evt->ecode);
+        }
+    }
+
     if(event_pckt->evt != HCI_VENDOR_SPECIFIC_DEBUG_EVT_CODE) return ret;
 
     if(blecore_evt->ecode == ACI_GATT_ATTRIBUTE_MODIFIED_VSEVT_CODE) {
         aci_gatt_attribute_modified_event_rp0* attr_mod =
             (aci_gatt_attribute_modified_event_rp0*)blecore_evt->data;
 
+        // Log ALL attribute modifications
+        FURI_LOG_I(TAG, "ATTR_MOD: handle=0x%04X len=%d (our char: decl=0x%04X val=0x%04X cccd=0x%04X)",
+            attr_mod->Attr_Handle, attr_mod->Attr_Data_Length,
+            svc->chars[0].handle, svc->chars[0].handle + 1, svc->chars[0].handle + 2);
+
         // CCCD write (subscribe/unsubscribe to notifications)
         if(attr_mod->Attr_Handle == svc->chars[0].handle + 2) {
-            FURI_LOG_I(TAG, "CCCD write: %d bytes", attr_mod->Attr_Data_Length);
             if(attr_mod->Attr_Data_Length == 2) {
                 uint16_t cccd_val = attr_mod->Attr_Data[0] | (attr_mod->Attr_Data[1] << 8);
+                FURI_LOG_I(TAG, "CCCD: val=%d", cccd_val);
                 if(cccd_val == 1 && svc->callback) {
-                    // Peer subscribed to notifications — notify app to send announce
-                    FURI_LOG_I(TAG, "Peer subscribed, sending announce event");
                     BitchatServiceEvent evt = {.event = BitchatServiceEventPeerSubscribed};
                     svc->callback(evt, svc->context);
                 }
             }
             ret = BleEventAckFlowEnable;
         }
-        // Any other attribute modification — log for debugging
-        else if(attr_mod->Attr_Handle != svc->chars[0].handle + 1) {
-            FURI_LOG_W(TAG, "Unknown attr write: handle=0x%04X (%d bytes), expected 0x%04X",
-                attr_mod->Attr_Handle, attr_mod->Attr_Data_Length,
-                svc->chars[0].handle + 1);
-        }
         // Characteristic value write (incoming data from peer)
-        if(attr_mod->Attr_Handle == svc->chars[0].handle + 1) {
-            FURI_LOG_I(TAG, "RX %d bytes from peer", attr_mod->Attr_Data_Length);
-
+        else if(attr_mod->Attr_Handle == svc->chars[0].handle + 1) {
+            FURI_LOG_I(TAG, "RX %d bytes from peer!", attr_mod->Attr_Data_Length);
+            if(attr_mod->Attr_Data_Length > 0) {
+                FURI_LOG_I(TAG, "  data[0..3]: %02X %02X %02X %02X",
+                    attr_mod->Attr_Data[0],
+                    attr_mod->Attr_Data_Length > 1 ? attr_mod->Attr_Data[1] : 0,
+                    attr_mod->Attr_Data_Length > 2 ? attr_mod->Attr_Data[2] : 0,
+                    attr_mod->Attr_Data_Length > 3 ? attr_mod->Attr_Data[3] : 0);
+            }
             if(svc->callback) {
                 BitchatServiceEvent evt = {
                     .event = BitchatServiceEventDataReceived,
