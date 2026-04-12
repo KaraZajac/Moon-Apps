@@ -26,9 +26,9 @@ void bitchat_add_chat_message(BitchatApp* app, const char* sender, const char* c
     line->content[BC_MAX_MSG_CONTENT] = '\0';
     app->message_count++;
 
-    // Rebuild chat log string
+    // Rebuild chat log string — newest first so scroll reset shows latest
     furi_string_reset(app->chat_log);
-    for(uint8_t i = 0; i < app->message_count; i++) {
+    for(int i = app->message_count - 1; i >= 0; i--) {
         furi_string_cat_printf(
             app->chat_log, "%s: %s\n", app->messages[i].sender, app->messages[i].content);
     }

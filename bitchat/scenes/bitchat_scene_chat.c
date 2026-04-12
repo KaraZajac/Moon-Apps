@@ -186,14 +186,13 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
 
     if(event.type == SceneManagerEventTypeCustom) {
         if(event.event == BitchatCustomEventTick) {
-            // Periodic re-announce via peripheral service (every 4s)
+            // Periodic re-announce via peripheral service
             announce_tick_counter++;
             if(announce_tick_counter >= ANNOUNCE_INTERVAL_TICKS) {
                 announce_tick_counter = 0;
                 send_announce_via_service(app);
             }
-            // Refresh chat display
-            rebuild_chat_widget(app);
+            // Don't rebuild on tick — only on new content
             return true;
         } else if(event.event == BitchatCustomEventNotification) {
             process_incoming_packet(app);
@@ -209,9 +208,23 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
 
                 if(pkt_len > 0) {
                     FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);
-                    ble_gatt_client_write(
+                    // Wait briefly for any pending GATT operation to complete
+                    furi_delay_ms(50);
+                    bool sent = ble_gatt_client_write(
                         app->connection_handle, app->bc_char_handle, pkt, pkt_len);
+                    if(!sent) {
+                        // Retry once after a longer delay
+                        furi_delay_ms(200);
+                        sent = ble_gatt_client_write(
+                            app->connection_handle, app->bc_char_handle, pkt, pkt_len);
+                        if(!sent) {
+                            FURI_LOG_E(TAG, "Message send failed after retry");
+                        }
+                    }
                 }
+
+                // Reset announce timer to avoid collision on next tick
+                announce_tick_counter = 0;
 
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 bitchat_add_chat_message(app, app->nickname, app->input_buf);
