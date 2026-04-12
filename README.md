@@ -46,6 +46,26 @@ To make an external app self-contained with SubGhz device access:
 
 ---
 
+### BLE Apps (Moon Exclusive)
+
+These apps leverage Moon Firmware's Full BLE stack with dual-role central+peripheral, GATT client, custom services, and extended advertising.
+
+| App | Description |
+|---|---|
+| **BitChat** | BLE mesh chat client. Decentralized peer-to-peer messaging over Bluetooth with no internet. Custom GATT profile, Ed25519 signed packets, Curve25519 key exchange, dual-role connections. Interoperates with Android/iOS BitChat apps. |
+| **Meshtastic** | BLE client for Meshtastic mesh networking radios. Connect to Meshtastic nodes, send/receive messages, view node info. Full GATT client with pairing, MTU exchange, and notification support. |
+| **Tracker Detector** | Passive BLE scanner for nearby trackers (Apple AirTag/FindMy, Samsung SmartTag, Tile, Chipolo, Google FMDN). Alerts when a tracker may be following you. Can play sound on detected trackers via GATT. |
+| **BLE Lock Tester** | BLE smart lock security tester. Scan and identify locks, run automated default PIN tests against known vulnerable lock profiles, manual GATT characteristic writes. For authorized testing only. |
+| **WhisperPair** | CVE-2025-36911 Fast Pair vulnerability scanner. Tests BLE audio devices for the Key-Based Pairing authentication bypass. 4 KBP test strategies, 18-device database, pairing mode detection. |
+| **BLE Connect** | General-purpose BLE device browser. Scan, connect, browse GATT services/characteristics, read/write values, save device profiles. |
+| **BLE Beacon Toolkit** | Create and broadcast custom iBeacon, Eddystone-URL, and AltBeacon advertisements. |
+| **BLE Cloner** | Scan a BLE device, capture its advertising data, and replay it as a clone. |
+| **BT Scanner** | Simple BLE device scanner with RSSI display. |
+| **BT Explorer** | Connect to BLE devices and browse GATT services. |
+| **BLE RSSI Tracker** | Lock onto a BLE device and track its signal strength with a live graph. |
+
+---
+
 ### Base
 
 Forked from [Momentum-Apps](https://github.com/Next-Flip/Momentum-Apps). All original Momentum app modifications, asset pack support, and community apps are preserved.
