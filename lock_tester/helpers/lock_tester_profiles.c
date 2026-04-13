@@ -83,7 +83,6 @@ static const LockTestCommand tests_masterlock[] = {
 
 // Ttlock / Sciener platform — service UUID 0x1910
 // Chars: FFF2 (write no-response), FFF4 (notify)
-static const uint8_t cmd_ttlock_header[] = {0x7F, 0x5A, 0x05, 0x03, 0x02, 0x00, 0x10, 0x00, 0x22};
 static const uint8_t cmd_ttlock_admin_check[] = {
     0x7F, 0x5A, 0x05, 0x03, 0x02, 0x00, 0x10, 0x00, 0x22,
     0x41, // admin check opcode

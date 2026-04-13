@@ -104,16 +104,15 @@ static void run_rapid_subscribe(GattFuzzerApp* app) {
 }
 
 static void run_mtu_fuzz(GattFuzzerApp* app) {
-    static const uint16_t mtu_values[] = {1, 23, 27, 65, 128, 247, 512, 0};
-    uint8_t num = sizeof(mtu_values) / sizeof(mtu_values[0]);
+    // MTU exchange only takes connection handle — we send it multiple times
+    // to test stack resilience to repeated MTU exchanges
+    uint8_t num = 5;
 
     if(app->fuzz_step < num) {
-        // MTU exchange is done at connection level, not per-characteristic
-        // We use ble_gatt_client_exchange_mtu which sends an ATT_Exchange_MTU_Request
-        furi_string_cat_printf(app->fuzz_log, "  MTU=%d..", mtu_values[app->fuzz_step]);
+        furi_string_cat_printf(app->fuzz_log, "  MTU exchange #%d..", app->fuzz_step + 1);
         text_box_set_text(app->text_box, furi_string_get_cstr(app->fuzz_log));
         app->waiting_response = true;
-        ble_gatt_client_exchange_mtu(app->connection_handle, mtu_values[app->fuzz_step]);
+        ble_gatt_client_exchange_mtu(app->connection_handle);
     } else {
         app->current_test++;
         app->fuzz_step = 0;
