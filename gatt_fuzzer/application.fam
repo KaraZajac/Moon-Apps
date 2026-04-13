@@ -1,0 +1,12 @@
+App(
+    appid="gatt_fuzzer",
+    name="GATT Fuzzer",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="gatt_fuzzer_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_icon="icon.png",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="BLE GATT protocol fuzzer — test any BLE device for ATT/GATT vulnerabilities",
+)

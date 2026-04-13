@@ -1,0 +1,6 @@
+ADD_SCENE(fuzz, start, Start)
+ADD_SCENE(fuzz, scan, Scan)
+ADD_SCENE(fuzz, scan_results, ScanResults)
+ADD_SCENE(fuzz, connecting, Connecting)
+ADD_SCENE(fuzz, test_menu, TestMenu)
+ADD_SCENE(fuzz, run_test, RunTest)
