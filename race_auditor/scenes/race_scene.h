@@ -1,0 +1,21 @@
+#pragma once
+#include <gui/scene_manager.h>
+
+#define ADD_SCENE(prefix, name, id) RaceScene##id,
+typedef enum {
+#include "race_scene_config.h"
+    RaceSceneNum,
+} RaceSceneId;
+#undef ADD_SCENE
+
+extern const SceneManagerHandlers race_scene_handlers;
+
+#define ADD_SCENE(prefix, name, id) void prefix##_scene_##name##_on_enter(void*);
+#include "race_scene_config.h"
+#undef ADD_SCENE
+#define ADD_SCENE(prefix, name, id) bool prefix##_scene_##name##_on_event(void*, SceneManagerEvent);
+#include "race_scene_config.h"
+#undef ADD_SCENE
+#define ADD_SCENE(prefix, name, id) void prefix##_scene_##name##_on_exit(void*);
+#include "race_scene_config.h"
+#undef ADD_SCENE

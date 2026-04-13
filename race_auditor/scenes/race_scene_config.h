@@ -1,0 +1,5 @@
+ADD_SCENE(race, start, Start)
+ADD_SCENE(race, scan, Scan)
+ADD_SCENE(race, scan_results, ScanResults)
+ADD_SCENE(race, connecting, Connecting)
+ADD_SCENE(race, audit, Audit)

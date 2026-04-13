@@ -1,0 +1,12 @@
+App(
+    appid="race_auditor",
+    name="RACE Auditor",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="race_auditor_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_icon="icon.png",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="Airoha RACE protocol auditor — test headphones for CVE-2025-20700/01/02",
+)
