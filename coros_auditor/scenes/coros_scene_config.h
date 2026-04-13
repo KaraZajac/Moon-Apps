@@ -1,0 +1,5 @@
+ADD_SCENE(coros, start, Start)
+ADD_SCENE(coros, scan, Scan)
+ADD_SCENE(coros, scan_results, ScanResults)
+ADD_SCENE(coros, connecting, Connecting)
+ADD_SCENE(coros, audit, Audit)

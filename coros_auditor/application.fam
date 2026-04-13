@@ -1,0 +1,12 @@
+App(
+    appid="coros_auditor",
+    name="COROS Auditor",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="coros_auditor_app",
+    stack_size=4 * 1024,
+    fap_category="Bluetooth",
+    fap_icon="icon.png",
+    fap_author="@KaraZajac",
+    fap_version="0.1",
+    fap_description="COROS smartwatch BLE auditor — test for CVE-2025-32875 through 48706",
+)

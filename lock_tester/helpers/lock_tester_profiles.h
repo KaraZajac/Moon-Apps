@@ -6,7 +6,7 @@
 
 #define LOCK_TEST_CMD_MAX    16
 #define LOCK_PROFILE_TESTS_MAX 12
-#define LOCK_PROFILE_COUNT   5
+#define LOCK_PROFILE_COUNT   8
 
 typedef struct {
     const char* name;
