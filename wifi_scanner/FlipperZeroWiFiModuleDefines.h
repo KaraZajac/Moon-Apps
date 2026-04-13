@@ -16,6 +16,6 @@
 
 #define NA 0
 
-#include <momentum/momentum.h>
+#include <moon/moon.h>
 
-#define UART_CH (momentum_settings.uart_esp_channel)
+#define UART_CH (moon_settings.uart_esp_channel)

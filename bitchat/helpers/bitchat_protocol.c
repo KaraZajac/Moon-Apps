@@ -1,7 +1,7 @@
 #include "bitchat_protocol.h"
 #include <string.h>
 #include <furi.h>
-#include <momentum/settings.h>
+#include <moon/settings.h>
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -33,7 +33,7 @@ static uint64_t bc_timestamp_now(void) {
     extern uint32_t furi_hal_rtc_get_timestamp(void);
     uint32_t local_ts = furi_hal_rtc_get_timestamp();
     // utc_offset_hours: e.g. -4 for EDT means local is UTC-4, so UTC = local + 4 hours
-    int32_t offset_seconds = -momentum_settings.utc_offset_hours * 3600;
+    int32_t offset_seconds = -moon_settings.utc_offset_hours * 3600;
     return ((uint64_t)local_ts + offset_seconds) * 1000ULL;
 }
 

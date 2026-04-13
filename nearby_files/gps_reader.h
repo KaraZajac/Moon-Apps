@@ -4,8 +4,8 @@
 
 // Define GPS_UART_CH per firmware origin
 #ifdef FW_ORIGIN_Moon
-#include <momentum/momentum.h>
-#define GPS_UART_CH (momentum_settings.uart_nmea_channel)
+#include <moon/moon.h>
+#define GPS_UART_CH (moon_settings.uart_nmea_channel)
 #else
 #define GPS_UART_CH (FuriHalSerialIdUsart)
 #endif

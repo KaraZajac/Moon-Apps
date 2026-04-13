@@ -9,10 +9,10 @@ void nrf24_init() {
 // this is needed if multiple SPI devices are connected to the same bus but with different CS pins
 #ifdef MOMENTUM_SETTINGS_PATH
 
-    if(momentum_settings.spi_nrf24_handle == SpiDefault) {
+    if(moon_settings.spi_nrf24_handle == SpiDefault) {
         furi_hal_gpio_init_simple(&gpio_ext_pc3, GpioModeOutputPushPull);
         furi_hal_gpio_write(&gpio_ext_pc3, true);
-    } else if(momentum_settings.spi_nrf24_handle == SpiExtra) {
+    } else if(moon_settings.spi_nrf24_handle == SpiExtra) {
         furi_hal_gpio_init_simple(&gpio_ext_pa4, GpioModeOutputPushPull);
         furi_hal_gpio_write(&gpio_ext_pa4, true);
     }
@@ -34,9 +34,9 @@ void nrf24_deinit() {
 
 #ifdef MOMENTUM_SETTINGS_PATH
     // resetting the CS pins to floating
-    if(momentum_settings.spi_nrf24_handle == SpiDefault) {
+    if(moon_settings.spi_nrf24_handle == SpiDefault) {
         furi_hal_gpio_init_simple(&gpio_ext_pc3, GpioModeAnalog);
-    } else if(momentum_settings.spi_nrf24_handle == SpiExtra) {
+    } else if(moon_settings.spi_nrf24_handle == SpiExtra) {
         furi_hal_gpio_init_simple(&gpio_ext_pa4, GpioModeAnalog);
     }
 #else
