@@ -3,6 +3,7 @@
 #include <gui/gui.h>
 #include <gui/elements.h>
 #include <input/input.h>
+#include <gap.h>
 
 #define TAG "BleRssiTracker"
 #define MAX_DEVICES 32
@@ -194,7 +195,7 @@ int32_t ble_rssi_tracker_app(void* p) {
             furi_mutex_acquire(app->mutex, FuriWaitForever);
             if(app->view == TrackerViewScan) {
                 if(event.key == InputKeyBack) {
-                    if(app->scanning) furi_hal_bt_stop_scanning();
+                    if(app->scanning) gap_stop_scanning();
                     running = false;
                 } else if(event.key == InputKeyOk) {
                     if(!app->scanning && app->cursor < app->device_count) {
@@ -210,18 +211,18 @@ int32_t ble_rssi_tracker_app(void* p) {
                         app->tracking = true;
                         app->view = TrackerViewTrack;
                         // Start continuous scanning
-                        furi_hal_bt_set_scan_callback(scan_cb, app);
+                        gap_set_scan_callback(scan_cb, app);
                         GapScanParams sp = {.interval = 0x30, .window = 0x20,
                                             .active = false, .timeout_ms = 0};
-                        furi_hal_bt_start_scanning(&sp);
+                        gap_start_scanning(&sp);
                     } else if(!app->scanning) {
                         app->device_count = 0;
                         app->cursor = 0;
                         app->scanning = true;
-                        furi_hal_bt_set_scan_callback(scan_cb, app);
+                        gap_set_scan_callback(scan_cb, app);
                         GapScanParams sp = {.interval = 0x60, .window = 0x30,
                                             .active = true, .timeout_ms = SCAN_TIMEOUT_MS};
-                        furi_hal_bt_start_scanning(&sp);
+                        gap_start_scanning(&sp);
                     }
                 } else if(event.key == InputKeyUp && app->cursor > 0) {
                     app->cursor--;
@@ -232,7 +233,7 @@ int32_t ble_rssi_tracker_app(void* p) {
                 }
             } else if(app->view == TrackerViewTrack) {
                 if(event.key == InputKeyBack) {
-                    furi_hal_bt_stop_scanning();
+                    gap_stop_scanning();
                     app->tracking = false;
                     app->view = TrackerViewScan;
                 }
@@ -245,7 +246,7 @@ int32_t ble_rssi_tracker_app(void* p) {
         view_port_update(app->view_port);
     }
 
-    furi_hal_bt_set_scan_callback(NULL, NULL);
+    gap_set_scan_callback(NULL, NULL);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
     furi_record_close(RECORD_GUI);

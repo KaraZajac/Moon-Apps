@@ -3,6 +3,7 @@
 #include <gui/gui.h>
 #include <gui/elements.h>
 #include <input/input.h>
+#include <gap.h>
 
 #define TAG "BtScanner"
 #define MAX_DEVICES 64
@@ -164,7 +165,7 @@ static void bt_scanner_start_scan(BtScannerApp* app) {
     furi_mutex_release(app->mutex);
 
     // Set our callback to receive scan results
-    furi_hal_bt_set_scan_callback(scan_result_cb, app);
+    gap_set_scan_callback(scan_result_cb, app);
 
     GapScanParams params = {
         .interval = 0x60,      // 60ms
@@ -172,10 +173,10 @@ static void bt_scanner_start_scan(BtScannerApp* app) {
         .active = true,        // Active scan to get names
         .timeout_ms = SCAN_TIMEOUT_MS,
     };
-    if(!furi_hal_bt_start_scanning(&params)) {
+    if(!gap_start_scanning(&params)) {
         FURI_LOG_E(TAG, "Failed to start scanning");
         app->scanning = false;
-        furi_hal_bt_set_scan_callback(NULL, NULL);
+        gap_set_scan_callback(NULL, NULL);
     }
 }
 
@@ -214,7 +215,7 @@ int32_t bt_scanner_app(void* p) {
                 switch(event.key) {
                 case InputKeyBack:
                     if(app->scanning) {
-                        furi_hal_bt_stop_scanning();
+                        gap_stop_scanning();
                     }
                     running = false;
                     break;
@@ -222,7 +223,7 @@ int32_t bt_scanner_app(void* p) {
                     if(!app->scanning) {
                         bt_scanner_start_scan(app);
                     } else {
-                        furi_hal_bt_stop_scanning();
+                        gap_stop_scanning();
                     }
                     break;
                 case InputKeyUp:
@@ -246,7 +247,7 @@ int32_t bt_scanner_app(void* p) {
     }
 
     // Cleanup
-    furi_hal_bt_set_scan_callback(NULL, NULL);
+    gap_set_scan_callback(NULL, NULL);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
     furi_record_close(RECORD_GUI);

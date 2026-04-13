@@ -60,6 +60,10 @@ bool lock_tester_scene_connecting_on_event(void* context, SceneManagerEvent even
                 app->connection_handle = gap_get_connection_handle();
                 FURI_LOG_I(TAG, "Connected, handle=%d", app->connection_handle);
 
+                // Initiate pairing — many smart locks require authenticated
+                // pairing before they'll accept GATT writes
+                gap_pair(app->connection_handle, false);
+
                 // Discover GATT services
                 ble_gatt_client_discover_services(app->connection_handle);
                 popup_set_header(app->popup, "Discovering...", 64, 20, AlignCenter, AlignCenter);

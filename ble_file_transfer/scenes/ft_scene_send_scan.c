@@ -98,6 +98,9 @@ bool ft_scene_send_scan_on_event(void* context, SceneManagerEvent event) {
             app->connection_handle = gap_get_connection_handle();
             furi_timer_stop(app->timer);
 
+            // Request 2M PHY for faster L2CAP throughput
+            gap_set_phy_preference(app->connection_handle, GapPhy2M, GapPhy2M);
+
             popup_set_text(app->popup, "Connected!\nOpening channel...", 64, 38, AlignCenter, AlignCenter);
 
             // Open CoC channel
