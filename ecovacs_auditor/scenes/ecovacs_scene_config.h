@@ -1,0 +1,5 @@
+ADD_SCENE(ecovacs, start, Start)
+ADD_SCENE(ecovacs, scan, Scan)
+ADD_SCENE(ecovacs, scan_results, ScanResults)
+ADD_SCENE(ecovacs, connecting, Connecting)
+ADD_SCENE(ecovacs, audit, Audit)
