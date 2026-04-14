@@ -87,6 +87,12 @@ typedef struct BitchatApp {
     uint16_t bc_char_handle; // BitChat characteristic value handle
     FuriTimer* timer;
     uint32_t tick_count;
+    uint8_t our_mac[6]; // Our BLE MAC for tie-breaking
+
+    // Scan results for peer selection
+    BcPeer scan_results[BC_MAX_PEERS];
+    uint8_t scan_result_count;
+    uint8_t selected_scan_idx;
 
     // Peers
     BcPeer peers[BC_MAX_PEERS];

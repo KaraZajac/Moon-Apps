@@ -227,7 +227,7 @@ BitchatApp* bitchat_app_alloc(void) {
     }
 
     // Start advertising
-    furi_hal_bt_start_advertising();
+    gap_start_advertising();
 
     FURI_LOG_I(TAG, "BitChat profile active, advertising started");
 
@@ -245,7 +245,7 @@ void bitchat_app_free(BitchatApp* app) {
     app->connected = false;
 
     // Stop advertising, disconnect, and restore default profile
-    furi_hal_bt_stop_advertising();
+    gap_stop_advertising();
     bt_set_status_changed_callback(app->bt, NULL, NULL);
     bt_disconnect(app->bt);
 
