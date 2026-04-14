@@ -1,51 +1,92 @@
 #include "../ft_app_i.h"
 
 #define SCAN_TIMEOUT_MS 10000
-#define CONNECT_TIMEOUT_POLLS 100
 
 static const uint8_t ft_svc_uuid[] = FT_SVC_UUID_128;
-static bool found_receiver = false;
 
-static void ft_scan_callback(GapScanResultData* result, void* context) {
-    FtApp* app = context;
-    if(!result->data || result->data_len == 0 || found_receiver) return;
-
-    // Look for our file transfer service UUID in the advertisement
+static bool parse_adv_name(const uint8_t* data, uint8_t len, char* name, size_t sz) {
     uint8_t pos = 0;
-    while(pos < result->data_len) {
-        uint8_t len = result->data[pos];
-        if(len == 0 || pos + len >= result->data_len) break;
-        uint8_t type = result->data[pos + 1];
+    while(pos < len) {
+        uint8_t l = data[pos];
+        if(l == 0 || pos + l >= len) break;
+        if(data[pos + 1] == 0x08 || data[pos + 1] == 0x09) {
+            uint8_t nl = l - 1;
+            if(nl >= sz) nl = sz - 1;
+            memcpy(name, &data[pos + 2], nl);
+            name[nl] = '\0';
+            return true;
+        }
+        pos += l + 1;
+    }
+    return false;
+}
 
-        // 128-bit UUID list (complete=0x07 or incomplete=0x06)
-        if((type == 0x06 || type == 0x07) && len >= 17) {
-            for(uint8_t i = 0; i + 15 < len - 1; i += 16) {
-                if(memcmp(&result->data[pos + 2 + i], ft_svc_uuid, 16) == 0) {
-                    // Found a file transfer receiver!
-                    memcpy(app->target_addr, result->address, 6);
-                    app->target_addr_type = result->address_type;
-                    found_receiver = true;
-                    gap_stop_scanning();
-                    app->scanning = false;
-                    return;
+static bool has_ft_uuid(const uint8_t* data, uint8_t len) {
+    uint8_t pos = 0;
+    while(pos < len) {
+        uint8_t l = data[pos];
+        if(l == 0 || pos + l >= len) break;
+        uint8_t type = data[pos + 1];
+        if((type == 0x06 || type == 0x07) && l >= 17) {
+            for(uint8_t i = 0; i + 15 < l - 1; i += 16) {
+                if(memcmp(&data[pos + 2 + i], ft_svc_uuid, 16) == 0) {
+                    return true;
                 }
             }
         }
-        pos += len + 1;
+        pos += l + 1;
     }
+    return false;
+}
+
+static void ft_scan_callback(GapScanResultData* result, void* context) {
+    FtApp* app = context;
+    if(!result->data || result->data_len == 0) return;
+
+    // Only show devices advertising our FT service UUID
+    if(!has_ft_uuid(result->data, result->data_len)) return;
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+
+    // Update existing or add new
+    for(uint8_t i = 0; i < app->scan_device_count; i++) {
+        if(memcmp(app->scan_devices[i].address, result->address, 6) == 0) {
+            app->scan_devices[i].rssi = result->rssi;
+            if(!app->scan_devices[i].has_name) {
+                app->scan_devices[i].has_name = parse_adv_name(
+                    result->data, result->data_len,
+                    app->scan_devices[i].name, sizeof(app->scan_devices[i].name));
+            }
+            furi_mutex_release(app->mutex);
+            return;
+        }
+    }
+
+    if(app->scan_device_count < FT_MAX_SCAN_DEVICES) {
+        FtScanDevice* dev = &app->scan_devices[app->scan_device_count];
+        memcpy(dev->address, result->address, 6);
+        dev->address_type = result->address_type;
+        dev->rssi = result->rssi;
+        dev->has_name = parse_adv_name(
+            result->data, result->data_len, dev->name, sizeof(dev->name));
+        app->scan_device_count++;
+    }
+
+    furi_mutex_release(app->mutex);
 }
 
 void ft_scene_send_scan_on_enter(void* context) {
     FtApp* app = context;
 
-    found_receiver = false;
-    app->connected = false;
-    app->coc_connected = false;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    app->scan_device_count = 0;
+    app->scanning = true;
+    furi_mutex_release(app->mutex);
 
     popup_reset(app->popup);
     popup_set_header(app->popup, "Scanning...", 64, 10, AlignCenter, AlignTop);
     char info[128];
-    snprintf(info, sizeof(info), "Looking for receiver\nFile: %.32s\nSize: %lu bytes",
+    snprintf(info, sizeof(info), "Looking for Flippers\nFile: %.32s\nSize: %lu bytes",
         app->filename, (unsigned long)app->file_size);
     popup_set_text(app->popup, info, 64, 38, AlignCenter, AlignCenter);
     view_dispatcher_switch_to_view(app->view_dispatcher, FtViewPopup);
@@ -57,14 +98,12 @@ void ft_scene_send_scan_on_enter(void* context) {
         .active = true,
         .timeout_ms = SCAN_TIMEOUT_MS,
     };
-    app->scanning = true;
-    app->tick_count = 0;
     if(!gap_start_scanning(&params)) {
         app->scanning = false;
         popup_set_text(app->popup, "Scan failed", 64, 38, AlignCenter, AlignCenter);
     }
 
-    furi_timer_start(app->timer, 100);
+    furi_timer_start(app->timer, 200);
 }
 
 bool ft_scene_send_scan_on_event(void* context, SceneManagerEvent event) {
@@ -72,58 +111,17 @@ bool ft_scene_send_scan_on_event(void* context, SceneManagerEvent event) {
     if(event.type != SceneManagerEventTypeCustom) return false;
 
     if(event.event == FtCustomEventTick) {
-        app->tick_count++;
-
-        if(found_receiver && !app->connected) {
-            // Connect to receiver
-            popup_set_text(app->popup, "Receiver found!\nConnecting...", 64, 38, AlignCenter, AlignCenter);
+        if(app->scanning && gap_get_state() != GapStateScanning) {
+            app->scanning = false;
+            furi_timer_stop(app->timer);
             gap_set_scan_callback(NULL, NULL);
 
-            if(!gap_connect(app->target_addr_type, app->target_addr)) {
-                popup_set_text(app->popup, "Connect failed", 64, 38, AlignCenter, AlignCenter);
-                return true;
+            if(app->scan_device_count > 0) {
+                scene_manager_next_scene(app->scene_manager, FtSceneSendResults);
+            } else {
+                popup_set_text(app->popup, "No Flippers found.\nMake sure another\nFlipper has BLE\nFile Transfer open.", 64, 38, AlignCenter, AlignCenter);
             }
         }
-
-        if(!found_receiver && !app->scanning) {
-            // Scan timed out
-            furi_timer_stop(app->timer);
-            popup_set_text(app->popup, "No receiver found.\nMake sure the other\nFlipper is in\nReceive mode.", 64, 38, AlignCenter, AlignCenter);
-            return true;
-        }
-
-        // Check connection
-        if(found_receiver && gap_get_state() == GapStateConnected && !app->connected) {
-            app->connected = true;
-            app->connection_handle = gap_get_connection_handle();
-            furi_timer_stop(app->timer);
-
-            // Request 2M PHY for faster L2CAP throughput
-            gap_set_phy_preference(app->connection_handle, GapPhy2M, GapPhy2M);
-
-            popup_set_text(app->popup, "Connected!\nOpening channel...", 64, 38, AlignCenter, AlignCenter);
-
-            // Open CoC channel
-            ble_l2cap_coc_connect(
-                app->connection_handle, FT_SPSM, FT_MTU, FT_MPS, FT_CREDITS);
-        }
-
-        if(app->tick_count >= CONNECT_TIMEOUT_POLLS && !app->connected) {
-            furi_timer_stop(app->timer);
-            popup_set_text(app->popup, "Connection timeout", 64, 38, AlignCenter, AlignCenter);
-        }
-
-        return true;
-    }
-
-    if(event.event == FtCustomEventCocConnected) {
-        // CoC channel open — go to transfer scene
-        scene_manager_next_scene(app->scene_manager, FtSceneTransfer);
-        return true;
-    }
-
-    if(event.event == FtCustomEventCocError) {
-        popup_set_text(app->popup, "Channel open failed", 64, 38, AlignCenter, AlignCenter);
         return true;
     }
 

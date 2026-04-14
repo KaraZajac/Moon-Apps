@@ -4,23 +4,29 @@ static bool sending_active = false;
 
 static void send_next_chunk(FtApp* app) {
     if(!app->tx_file || !storage_file_is_open(app->tx_file)) return;
-    if(app->tx_credits == 0) return; // Wait for credits
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+    uint16_t credits = app->tx_credits;
+    furi_mutex_release(app->mutex);
+
+    if(credits == 0) return;
 
     uint8_t buf[FT_MPS];
     uint16_t read = storage_file_read(app->tx_file, &buf[1], FT_DATA_CHUNK);
 
     if(read > 0) {
         buf[0] = FT_PKT_FILE_DATA;
-        if(ble_l2cap_coc_send(app->coc_channel_index, buf, read + 1)) {
+        if(ble_l2cap_coc_send(app->send_coc_channel, buf, read + 1)) {
             app->bytes_transferred += read;
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
             app->tx_credits--;
+            furi_mutex_release(app->mutex);
         }
     }
 
     if(storage_file_eof(app->tx_file)) {
-        // Send completion packet
         uint8_t done = FT_PKT_FILE_DONE;
-        ble_l2cap_coc_send(app->coc_channel_index, &done, 1);
+        ble_l2cap_coc_send(app->send_coc_channel, &done, 1);
         storage_file_close(app->tx_file);
         sending_active = false;
         FURI_LOG_I(TAG, "File sent: %lu bytes", app->bytes_transferred);
@@ -49,8 +55,15 @@ static void start_sending(FtApp* app) {
     if(name_len > FT_DATA_CHUNK - 4) name_len = FT_DATA_CHUNK - 4;
     memcpy(&hdr[5], app->filename, name_len);
 
-    ble_l2cap_coc_send(app->coc_channel_index, hdr, 5 + name_len);
+    if(!ble_l2cap_coc_send(app->send_coc_channel, hdr, 5 + name_len)) {
+        FURI_LOG_E(TAG, "Failed to send file header");
+        app->transfer_error = true;
+        return;
+    }
+
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
     app->tx_credits--;
+    furi_mutex_release(app->mutex);
 
     sending_active = true;
     FURI_LOG_I(TAG, "Sending: %s (%lu bytes)", app->filename, app->file_size);
@@ -63,14 +76,12 @@ static void update_progress_widget(FtApp* app) {
     widget_add_string_element(app->widget, 64, 5, AlignCenter, AlignTop, FontPrimary, mode_str);
     widget_add_string_element(app->widget, 64, 17, AlignCenter, AlignTop, FontSecondary, app->filename);
 
-    // Progress bar
     uint8_t progress = 0;
     if(app->file_size > 0) {
         progress = (app->bytes_transferred * 100) / app->file_size;
         if(progress > 100) progress = 100;
     }
 
-    // Draw progress bar outline (x=4, y=32, w=120, h=10)
     char progress_str[32];
     snprintf(progress_str, sizeof(progress_str), "%lu / %lu bytes (%d%%)",
         app->bytes_transferred, app->file_size, progress);
@@ -98,7 +109,7 @@ void ft_scene_transfer_on_enter(void* context) {
     update_progress_widget(app);
     view_dispatcher_switch_to_view(app->view_dispatcher, FtViewWidget);
 
-    furi_timer_start(app->timer, 50); // Fast tick for streaming
+    furi_timer_start(app->timer, 50);
 }
 
 bool ft_scene_transfer_on_event(void* context, SceneManagerEvent event) {
@@ -106,31 +117,42 @@ bool ft_scene_transfer_on_event(void* context, SceneManagerEvent event) {
     if(event.type != SceneManagerEventTypeCustom) return false;
 
     if(event.event == FtCustomEventTick) {
-        // For sender: keep streaming data chunks
-        if(app->mode == FtModeSending && sending_active && app->tx_credits > 0) {
-            // Send multiple chunks per tick for throughput
-            for(int i = 0; i < 4 && app->tx_credits > 0 && sending_active; i++) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        uint16_t credits = app->tx_credits;
+        bool complete = app->transfer_complete;
+        bool error = app->transfer_error;
+        furi_mutex_release(app->mutex);
+
+        if(app->mode == FtModeSending && sending_active && credits > 0) {
+            for(int i = 0; i < 4 && credits > 0 && sending_active; i++) {
                 send_next_chunk(app);
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                credits = app->tx_credits;
+                furi_mutex_release(app->mutex);
             }
         }
 
         update_progress_widget(app);
 
-        if(app->transfer_complete) {
+        if(complete) {
             furi_timer_stop(app->timer);
             notification_message(app->notifications, &sequence_success);
+        }
+        if(error) {
+            furi_timer_stop(app->timer);
         }
         return true;
     }
 
     if(event.event == FtCustomEventCocCredits) {
-        // Got more credits — resume sending
         return true;
     }
 
     if(event.event == FtCustomEventCocDataReceived) {
-        // Receiver got data — progress updated in the CoC callback
-        if(app->transfer_complete) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        bool complete = app->transfer_complete;
+        furi_mutex_release(app->mutex);
+        if(complete) {
             furi_timer_stop(app->timer);
             notification_message(app->notifications, &sequence_success);
             update_progress_widget(app);
@@ -139,7 +161,10 @@ bool ft_scene_transfer_on_event(void* context, SceneManagerEvent event) {
     }
 
     if(event.event == FtCustomEventCocDisconnected || event.event == FtCustomEventCocError) {
-        if(!app->transfer_complete) {
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        bool complete = app->transfer_complete;
+        furi_mutex_release(app->mutex);
+        if(!complete) {
             app->transfer_error = true;
             furi_timer_stop(app->timer);
             update_progress_widget(app);
@@ -158,10 +183,16 @@ void ft_scene_transfer_on_exit(void* context) {
     if(storage_file_is_open(app->tx_file)) storage_file_close(app->tx_file);
     if(storage_file_is_open(app->rx_file)) storage_file_close(app->rx_file);
 
-    if(app->coc_connected) {
-        ble_l2cap_coc_disconnect(app->coc_channel_index);
-        app->coc_connected = false;
+    if(app->send_coc_connected) {
+        ble_l2cap_coc_disconnect(app->send_coc_channel);
+        app->send_coc_connected = false;
+    }
+    if(app->send_connected) {
+        gap_disconnect(app->send_handle);
+        app->send_connected = false;
     }
 
+    // Reset mode to idle so we're ready for next transfer
+    app->mode = FtModeIdle;
     widget_reset(app->widget);
 }

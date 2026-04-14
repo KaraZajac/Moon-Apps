@@ -24,7 +24,7 @@
 
 #define TAG "BleFileTransfer"
 
-#define FT_RX_BUF_SIZE 4096
+#define FT_MAX_SCAN_DEVICES 16
 
 typedef enum {
     FtViewSubmenu,
@@ -39,6 +39,14 @@ typedef enum {
     FtModeSending,
     FtModeReceiving,
 } FtMode;
+
+typedef struct {
+    uint8_t address[6];
+    uint8_t address_type;
+    int8_t rssi;
+    char name[32];
+    bool has_name;
+} FtScanDevice;
 
 typedef struct FtApp {
     Gui* gui;
@@ -55,15 +63,31 @@ typedef struct FtApp {
     Loading* loading;
     DialogEx* dialog_ex;
 
-    // BLE state
+    // BLE state (protected by mutex)
     FuriMutex* mutex;
     FuriTimer* timer;
     uint32_t tick_count;
-    bool connected;
-    uint16_t connection_handle;
-    uint8_t coc_channel_index;
-    bool coc_connected;
+
+    // Dual-role: always advertising as receiver
+    bool adv_active;
+
+    // Send state (central role)
+    bool send_connected;
+    uint16_t send_handle;
+    uint8_t send_coc_channel;
+    bool send_coc_connected;
+    uint16_t tx_credits;
     bool scanning;
+
+    // Receive state (peripheral role — incoming connections)
+    bool recv_connected;
+    uint16_t recv_handle;
+    uint8_t recv_coc_channel;
+    bool recv_coc_connected;
+
+    // Scan results
+    FtScanDevice scan_devices[FT_MAX_SCAN_DEVICES];
+    uint8_t scan_device_count;
 
     // Transfer state
     FtMode mode;
@@ -74,12 +98,9 @@ typedef struct FtApp {
     bool transfer_complete;
     bool transfer_error;
 
-    // Receive buffer
+    // File handles
     File* rx_file;
-
-    // Send state
     File* tx_file;
-    uint16_t tx_credits;
 
     // Target device for sending
     uint8_t target_addr[6];

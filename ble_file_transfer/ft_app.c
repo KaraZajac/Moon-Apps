@@ -8,31 +8,53 @@ static bool ft_back_event_callback(void* ctx) {
     return scene_manager_handle_back_event(((FtApp*)ctx)->scene_manager);
 }
 
-// L2CAP CoC callback — runs on BLE thread
+// L2CAP CoC callback — runs on BLE thread, use mutex for shared state
 static void ft_coc_callback(BleL2capCocEvent* event, void* context) {
     FtApp* app = context;
+    furi_mutex_acquire(app->mutex, FuriWaitForever);
+
     switch(event->type) {
     case BleL2capCocEventConnected:
-        app->coc_channel_index = event->channel_index;
-        app->coc_connected = true;
-        app->tx_credits = event->connected.initial_credits;
+        if(app->mode == FtModeSending) {
+            // Sender initiated this CoC — central role
+            app->send_coc_channel = event->channel_index;
+            app->send_coc_connected = true;
+            app->tx_credits = event->connected.initial_credits;
+        } else {
+            // Incoming CoC from another Flipper — peripheral role (receive)
+            app->recv_coc_channel = event->channel_index;
+            app->recv_coc_connected = true;
+            // Capture connection handle for the peripheral connection
+            app->recv_handle = gap_get_connection_handle_by_role(false);
+            if(app->recv_handle == 0) {
+                app->recv_handle = gap_get_connection_handle();
+            }
+            app->mode = FtModeReceiving;
+        }
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocConnected);
-        break;
+        return;
+
     case BleL2capCocEventDisconnected:
-        app->coc_connected = false;
+        if(event->channel_index == app->send_coc_channel) {
+            app->send_coc_connected = false;
+        } else {
+            app->recv_coc_connected = false;
+        }
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocDisconnected);
-        break;
+        return;
+
     case BleL2capCocEventDataReceived:
-        // Process received data directly (small packets, fast processing)
-        if(app->mode == FtModeReceiving && app->rx_file) {
+        if(app->mode == FtModeReceiving) {
             const uint8_t* data = event->data.data;
             uint16_t len = event->data.data_len;
 
             if(len > 0) {
                 uint8_t pkt_type = data[0];
                 if(pkt_type == FT_PKT_FILE_HEADER && len >= 6) {
-                    // Parse file header: [type][size_le32][filename...]
-                    app->file_size = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+                    app->file_size = data[1] | (data[2] << 8) |
+                                     (data[3] << 16) | (data[4] << 24);
                     uint16_t name_len = len - 5;
                     if(name_len >= FT_MAX_FILENAME) name_len = FT_MAX_FILENAME - 1;
                     memcpy(app->filename, &data[5], name_len);
@@ -40,63 +62,100 @@ static void ft_coc_callback(BleL2capCocEvent* event, void* context) {
                     app->bytes_transferred = 0;
 
                     // Open file for writing
-                    FuriString* path = furi_string_alloc();
-                    furi_string_printf(path, "/ext/received/%s", app->filename);
-
                     storage_simply_mkdir(app->storage, "/ext/received");
-                    if(app->rx_file) {
+                    if(app->rx_file && storage_file_is_open(app->rx_file)) {
                         storage_file_close(app->rx_file);
                     }
-                    storage_file_open(
-                        app->rx_file, furi_string_get_cstr(path),
-                        FSAM_WRITE, FSOM_CREATE_ALWAYS);
+                    FuriString* path = furi_string_alloc();
+                    furi_string_printf(path, "/ext/received/%s", app->filename);
+                    if(!storage_file_open(
+                           app->rx_file, furi_string_get_cstr(path),
+                           FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+                        FURI_LOG_E(TAG, "Failed to open rx file");
+                        app->transfer_error = true;
+                    }
                     furi_string_free(path);
 
                     FURI_LOG_I(TAG, "Receiving: %s (%lu bytes)", app->filename, app->file_size);
-
-                    // Grant more credits for data streaming
-                    ble_l2cap_coc_flow_control(app->coc_channel_index, FT_CREDITS);
+                    ble_l2cap_coc_flow_control(app->recv_coc_channel, FT_CREDITS);
 
                 } else if(pkt_type == FT_PKT_FILE_DATA && len > 1) {
-                    // Write data to file
-                    uint16_t written = storage_file_write(app->rx_file, &data[1], len - 1);
-                    app->bytes_transferred += written;
-
-                    // Grant a credit for each received packet
-                    ble_l2cap_coc_flow_control(app->coc_channel_index, 1);
+                    if(app->rx_file && storage_file_is_open(app->rx_file)) {
+                        uint16_t written = storage_file_write(app->rx_file, &data[1], len - 1);
+                        app->bytes_transferred += written;
+                        if(written != (uint16_t)(len - 1)) {
+                            FURI_LOG_E(TAG, "Write incomplete: %d/%d", written, len - 1);
+                        }
+                    }
+                    ble_l2cap_coc_flow_control(app->recv_coc_channel, 1);
 
                 } else if(pkt_type == FT_PKT_FILE_DONE) {
-                    // File complete
-                    storage_file_close(app->rx_file);
+                    if(app->rx_file && storage_file_is_open(app->rx_file)) {
+                        storage_file_close(app->rx_file);
+                    }
                     app->transfer_complete = true;
                     FURI_LOG_I(TAG, "File received: %lu bytes", app->bytes_transferred);
 
-                    // Send ACK
                     uint8_t ack = FT_PKT_FILE_ACK;
-                    ble_l2cap_coc_send(app->coc_channel_index, &ack, 1);
+                    ble_l2cap_coc_send(app->recv_coc_channel, &ack, 1);
                 }
             }
         }
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocDataReceived);
-        break;
+        return;
+
     case BleL2capCocEventCreditsReceived:
         app->tx_credits += event->credits.credits;
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocCredits);
-        break;
+        return;
+
     case BleL2capCocEventTxDone:
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocTxDone);
-        break;
+        return;
+
     case BleL2capCocEventError:
         app->transfer_error = true;
+        furi_mutex_release(app->mutex);
         view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventCocError);
-        break;
+        return;
     }
+
+    furi_mutex_release(app->mutex);
 }
 
-// Timer callback
 static void ft_timer_callback(void* context) {
     FtApp* app = context;
     view_dispatcher_send_custom_event(app->view_dispatcher, FtCustomEventTick);
+}
+
+// Start extended advertising with FT service UUID (always-on receiver)
+void ft_start_advertising(FtApp* app) {
+    static const uint8_t ft_svc_uuid[] = FT_SVC_UUID_128;
+
+    gap_ext_adv_configure(
+        FT_ADV_HANDLE,
+        GAP_EXT_ADV_PROP_CONNECTABLE | GAP_EXT_ADV_PROP_SCANNABLE,
+        0x0080, 0x00A0, 0x01, 0x01);
+
+    uint8_t adv_data[20];
+    adv_data[0] = 17;
+    adv_data[1] = 0x07;
+    memcpy(&adv_data[2], ft_svc_uuid, 16);
+    gap_ext_adv_set_data(FT_ADV_HANDLE, adv_data, 18);
+
+    gap_ext_adv_start(FT_ADV_HANDLE, 0);
+    app->adv_active = true;
+    FURI_LOG_I(TAG, "Receiver advertising started");
+}
+
+void ft_stop_advertising(FtApp* app) {
+    if(app->adv_active) {
+        gap_ext_adv_stop(FT_ADV_HANDLE);
+        app->adv_active = false;
+    }
 }
 
 FtApp* ft_app_alloc(void) {
@@ -116,16 +175,12 @@ FtApp* ft_app_alloc(void) {
 
     app->submenu = submenu_alloc();
     view_dispatcher_add_view(app->view_dispatcher, FtViewSubmenu, submenu_get_view(app->submenu));
-
     app->widget = widget_alloc();
     view_dispatcher_add_view(app->view_dispatcher, FtViewWidget, widget_get_view(app->widget));
-
     app->popup = popup_alloc();
     view_dispatcher_add_view(app->view_dispatcher, FtViewPopup, popup_get_view(app->popup));
-
     app->loading = loading_alloc();
     view_dispatcher_add_view(app->view_dispatcher, FtViewLoading, loading_get_view(app->loading));
-
     app->dialog_ex = dialog_ex_alloc();
     view_dispatcher_add_view(app->view_dispatcher, FtViewDialogEx, dialog_ex_get_view(app->dialog_ex));
 
@@ -135,32 +190,28 @@ FtApp* ft_app_alloc(void) {
     app->rx_file = storage_file_alloc(app->storage);
     app->tx_file = storage_file_alloc(app->storage);
 
-    // Init L2CAP CoC
     ble_l2cap_coc_init();
     ble_l2cap_coc_set_callback(ft_coc_callback, app);
+
+    // Start advertising immediately — always ready to receive
+    ft_start_advertising(app);
 
     return app;
 }
 
 void ft_app_free(FtApp* app) {
-    // Clean up BLE
+    ft_stop_advertising(app);
+    gap_ext_adv_remove(FT_ADV_HANDLE);
+
     gap_set_scan_callback(NULL, NULL);
     ble_l2cap_coc_set_callback(NULL, NULL);
     ble_l2cap_coc_deinit();
 
-    if(app->scanning) {
-        gap_stop_scanning();
-        app->scanning = false;
-    }
-    if(app->coc_connected) {
-        ble_l2cap_coc_disconnect(app->coc_channel_index);
-    }
+    if(app->scanning) { gap_stop_scanning(); app->scanning = false; }
+    if(app->send_coc_connected) ble_l2cap_coc_disconnect(app->send_coc_channel);
+    if(app->recv_coc_connected) ble_l2cap_coc_disconnect(app->recv_coc_channel);
+    if(app->send_connected) gap_disconnect(app->send_handle);
 
-    // Stop extended advertising if started
-    gap_ext_adv_stop(FT_ADV_HANDLE);
-    gap_ext_adv_remove(FT_ADV_HANDLE);
-
-    // Close files
     if(storage_file_is_open(app->rx_file)) storage_file_close(app->rx_file);
     if(storage_file_is_open(app->tx_file)) storage_file_close(app->tx_file);
     storage_file_free(app->rx_file);
