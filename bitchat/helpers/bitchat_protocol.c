@@ -31,7 +31,6 @@ static uint64_t get_u64_be(const uint8_t* buf) {
 static uint64_t bc_timestamp_now(void) {
     // Unix timestamp in milliseconds (Android uses System.currentTimeMillis())
     // Flipper RTC stores local time, so we apply the UTC offset from settings
-    extern uint32_t furi_hal_rtc_get_timestamp(void);
     uint32_t local_ts = furi_hal_rtc_get_timestamp();
     // utc_offset_hours: e.g. -4 for EDT means local is UTC-4, so UTC = local + 4 hours
     int32_t offset_seconds = -moon_settings.utc_offset_hours * 3600;
