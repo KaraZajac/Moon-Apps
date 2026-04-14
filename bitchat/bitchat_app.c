@@ -184,6 +184,10 @@ BitchatApp* bitchat_app_alloc(void) {
     bc_identity_load_or_create(&app->identity);
     strncpy(app->nickname, "Flipper", BC_MAX_NICKNAME);
 
+    // Capture our BLE MAC for dual-role tie-breaking
+    const uint8_t* ble_mac = furi_hal_version_get_ble_mac();
+    if(ble_mac) memcpy(app->our_mac, ble_mac, 6);
+
     // Self-test: verify our Ed25519 implementation produces valid signatures
     {
         uint8_t test_msg[] = "BitChat self-test";

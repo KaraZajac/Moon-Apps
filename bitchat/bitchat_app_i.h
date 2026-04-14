@@ -49,6 +49,10 @@ typedef struct {
     int8_t rssi;
     uint32_t last_seen; // tick
     bool connected;
+    // Per-peer central connection (when we connected to them)
+    uint16_t central_handle;    // GATT connection handle (central role)
+    uint16_t central_char;      // their BitChat characteristic value handle
+    bool central_active;        // we have an active central connection to this peer
 } BcPeer;
 
 typedef struct {

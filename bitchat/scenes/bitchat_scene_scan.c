@@ -23,6 +23,13 @@ typedef enum {
 
 static ScanPhase scan_phase;
 
+// Dual-role tie-breaking: compare MAC addresses.
+// Lower MAC acts as central (initiates connection).
+// Returns true if we should connect as central to this peer.
+static bool should_we_be_central(const uint8_t our_mac[6], const uint8_t peer_mac[6]) {
+    return memcmp(our_mac, peer_mac, 6) < 0;
+}
+
 static bool parse_adv_name(const uint8_t* data, uint8_t len, char* name, size_t sz) {
     uint8_t pos = 0;
     while(pos < len) {
@@ -154,15 +161,22 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
                 popup_set_text(app->popup, "No BitChat peers\nfound nearby", 64, 36, AlignCenter, AlignCenter);
                 scan_phase = ScanPhaseDone;
             } else if(app->scan_result_count == 1) {
-                // Single peer — connect directly
-                app->selected_scan_idx = 0;
-                scan_phase = ScanPhaseConnecting;
-                app->tick_count = 0;
+                // Single peer — check tie-breaking before connecting
                 BcPeer* dev = &app->scan_results[0];
-                popup_set_text(app->popup, "Connecting...", 64, 36, AlignCenter, AlignCenter);
-                if(!gap_connect(dev->address_type, dev->address)) {
-                    popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
+                if(should_we_be_central(app->our_mac, dev->address)) {
+                    app->selected_scan_idx = 0;
+                    scan_phase = ScanPhaseConnecting;
+                    app->tick_count = 0;
+                    popup_set_text(app->popup, "Connecting...", 64, 36, AlignCenter, AlignCenter);
+                    if(!gap_connect(dev->address_type, dev->address)) {
+                        popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
+                        scan_phase = ScanPhaseDone;
+                    }
+                } else {
+                    // Higher MAC — wait for peer to connect to us
+                    popup_set_text(app->popup, "Peer found!\nWaiting for them\nto connect to us...", 64, 36, AlignCenter, AlignCenter);
                     scan_phase = ScanPhaseDone;
+                    // The peer's scan will find our advertisement and connect as central
                 }
             } else {
                 // Multiple peers — show selection submenu
@@ -207,6 +221,33 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
 
     case ScanPhaseAnnounceDelay:
         if(app->tick_count >= 2) {
+            // Store per-peer central connection info in the peer table
+            if(app->selected_scan_idx < app->scan_result_count) {
+                BcPeer* scan_dev = &app->scan_results[app->selected_scan_idx];
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                // Find or create peer entry
+                int8_t peer_idx = -1;
+                for(uint8_t i = 0; i < app->peer_count; i++) {
+                    if(memcmp(app->peers[i].address, scan_dev->address, 6) == 0) {
+                        peer_idx = i;
+                        break;
+                    }
+                }
+                if(peer_idx < 0 && app->peer_count < BC_MAX_PEERS) {
+                    peer_idx = app->peer_count++;
+                    memcpy(app->peers[peer_idx].address, scan_dev->address, 6);
+                    strncpy(app->peers[peer_idx].nickname, scan_dev->nickname, BC_MAX_NICKNAME);
+                }
+                if(peer_idx >= 0) {
+                    app->peers[peer_idx].central_handle = app->connection_handle;
+                    app->peers[peer_idx].central_char = app->bc_char_handle;
+                    app->peers[peer_idx].central_active = true;
+                    app->peers[peer_idx].connected = true;
+                    app->peers[peer_idx].last_seen = furi_get_tick();
+                }
+                furi_mutex_release(app->mutex);
+            }
+
             BcAnnounce announce = {0};
             strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
             memcpy(announce.noise_pubkey, app->identity.noise_public, 32);

@@ -258,8 +258,8 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             rebuild_chat_widget(app);
             return true;
         } else if(event.event == BitchatCustomEventMsgSend) {
-            // User submitted a message — send as raw UTF-8 broadcast
-            if(app->input_buf[0] != '\0' && app->connected) {
+            // User submitted a message — send to ALL connected peers
+            if(app->input_buf[0] != '\0') {
                 uint8_t pkt[BC_PAD_BLOCK_256];
                 uint16_t pkt_len = bc_build_signed_broadcast_packet(
                     pkt, sizeof(pkt), app->identity.peer_id, app->input_buf,
@@ -267,22 +267,33 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
 
                 if(pkt_len > 0) {
                     FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);
-                    // Wait briefly for any pending GATT operation to complete
-                    furi_delay_ms(50);
-                    bool sent = ble_gatt_client_write(
-                        app->connection_handle, app->bc_char_handle, pkt, pkt_len);
-                    if(!sent) {
-                        // Retry once after a longer delay
-                        furi_delay_ms(200);
-                        sent = ble_gatt_client_write(
-                            app->connection_handle, app->bc_char_handle, pkt, pkt_len);
-                        if(!sent) {
-                            FURI_LOG_E(TAG, "Message send failed after retry");
+
+                    // Send via peripheral notification (reaches peers connected to us)
+                    if(app->svc) {
+                        ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+                    }
+
+                    // Send via GATT client write to each peer we connected to as central
+                    furi_mutex_acquire(app->mutex, FuriWaitForever);
+                    for(uint8_t i = 0; i < app->peer_count; i++) {
+                        if(app->peers[i].central_active && app->peers[i].central_char != 0) {
+                            furi_delay_ms(20);
+                            ble_gatt_client_write(
+                                app->peers[i].central_handle,
+                                app->peers[i].central_char,
+                                pkt, pkt_len);
                         }
+                    }
+                    furi_mutex_release(app->mutex);
+
+                    // Also send via legacy single connection (backward compat)
+                    if(app->connected && app->bc_char_handle != 0) {
+                        furi_delay_ms(20);
+                        ble_gatt_client_write(
+                            app->connection_handle, app->bc_char_handle, pkt, pkt_len);
                     }
                 }
 
-                // Reset announce timer to avoid collision on next tick
                 announce_tick_counter = 0;
 
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
