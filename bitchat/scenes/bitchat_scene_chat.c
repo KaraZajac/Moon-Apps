@@ -53,9 +53,64 @@ static void process_incoming_packet(BitchatApp* app) {
 
     FURI_LOG_I(TAG, "Packet: type=0x%02X ttl=%d payload=%d", hdr.type, hdr.ttl, hdr.payload_len);
 
+    // Handle FRAGMENT packets — reassemble before processing
+    if(hdr.type == BC_TYPE_FRAGMENT) {
+        uint8_t reassembled[2048];
+        uint16_t reassembled_len = bc_fragment_process(
+            &app->frag_table, app->rx_buf, app->rx_len, reassembled, sizeof(reassembled));
+        if(reassembled_len == 0) return; // incomplete, wait for more fragments
+
+        // Replace rx_buf with reassembled packet and re-decode header
+        if(reassembled_len <= sizeof(app->rx_buf)) {
+            memcpy(app->rx_buf, reassembled, reassembled_len);
+            app->rx_len = reassembled_len;
+            if(!bc_decode_header(app->rx_buf, app->rx_len, &hdr)) return;
+            FURI_LOG_I(TAG, "Reassembled: type=0x%02X payload=%d", hdr.type, hdr.payload_len);
+        } else {
+            return; // too large for our buffer
+        }
+    }
+
+    // Deduplication — drop packets we've already processed
     uint16_t payload_offset = BC_HEADER_SIZE + BC_SENDER_ID_SIZE;
     if(hdr.has_recipient) payload_offset += BC_SENDER_ID_SIZE;
     if(payload_offset >= app->rx_len) return;
+
+    if(bc_dedup_check(&app->dedup_table, &hdr,
+                      &app->rx_buf[payload_offset], hdr.payload_len)) {
+        FURI_LOG_D(TAG, "Duplicate packet — dropped");
+        return;
+    }
+
+    // Relay: forward to other peers with decremented TTL
+    uint8_t relay_ttl = bc_relay_should_forward(&hdr, app->identity.peer_id, app->peer_count);
+    if(relay_ttl > 0) {
+        // Create relay copy with decremented TTL
+        uint8_t relay_buf[512];
+        uint16_t relay_len = app->rx_len;
+        if(relay_len <= sizeof(relay_buf)) {
+            memcpy(relay_buf, app->rx_buf, relay_len);
+            relay_buf[2] = relay_ttl; // update TTL
+
+            // Send via peripheral notification (flood to all connected peers)
+            if(app->svc) {
+                ble_svc_bitchat_tx(app->svc, relay_buf, relay_len);
+            }
+            // Send via central connections
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            for(uint8_t i = 0; i < app->peer_count; i++) {
+                if(app->peers[i].central_active && app->peers[i].central_char != 0) {
+                    ble_gatt_client_write(
+                        app->peers[i].central_handle,
+                        app->peers[i].central_char,
+                        relay_buf, relay_len);
+                    furi_delay_ms(10);
+                }
+            }
+            furi_mutex_release(app->mutex);
+            FURI_LOG_D(TAG, "Relayed packet (new TTL=%d)", relay_ttl);
+        }
+    }
 
     const uint8_t* payload = &app->rx_buf[payload_offset];
     uint16_t payload_len = app->rx_len - payload_offset;

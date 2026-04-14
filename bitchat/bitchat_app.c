@@ -188,6 +188,10 @@ BitchatApp* bitchat_app_alloc(void) {
     const uint8_t* ble_mac = furi_hal_version_get_ble_mac();
     if(ble_mac) memcpy(app->our_mac, ble_mac, 6);
 
+    // Init fragment and dedup tables
+    bc_fragment_init(&app->frag_table);
+    bc_dedup_init(&app->dedup_table);
+
     // Self-test: verify our Ed25519 implementation produces valid signatures
     {
         uint8_t test_msg[] = "BitChat self-test";

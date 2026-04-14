@@ -123,6 +123,10 @@ typedef struct BitchatApp {
     // Receive buffer
     uint8_t rx_buf[512];
     uint16_t rx_len;
+
+    // Fragment reassembly + deduplication (Phase 3)
+    BcFragmentTable frag_table;
+    BcDedupTable dedup_table;
 } BitchatApp;
 
 // Add a message to the chat log

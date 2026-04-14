@@ -436,3 +436,246 @@ bool bc_decode_message(
 
     return msg->sender[0] != '\0' && msg->content[0] != '\0';
 }
+
+// ── Fragment Reassembly ─────────────────────────────────────────────
+
+void bc_fragment_init(BcFragmentTable* ft) {
+    memset(ft, 0, sizeof(BcFragmentTable));
+}
+
+uint16_t bc_fragment_process(
+    BcFragmentTable* ft,
+    const uint8_t* pkt_data,
+    uint16_t pkt_len,
+    uint8_t* out_buf,
+    uint16_t out_buf_sz) {
+    // Parse outer header
+    BcPacketHeader hdr;
+    if(!bc_decode_header(pkt_data, pkt_len, &hdr)) return 0;
+    if(hdr.type != BC_TYPE_FRAGMENT) return 0;
+
+    uint16_t payload_offset = BC_HEADER_SIZE + BC_SENDER_ID_SIZE;
+    if(payload_offset + BC_FRAG_HEADER_SIZE >= pkt_len) return 0;
+
+    const uint8_t* frag_hdr = &pkt_data[payload_offset];
+    // Parse fragment sub-header: fragmentID(8) + index(2) + total(2) + origType(1)
+    const uint8_t* frag_id = &frag_hdr[0];
+    uint16_t index = (frag_hdr[8] << 8) | frag_hdr[9];
+    uint16_t total = (frag_hdr[10] << 8) | frag_hdr[11];
+    uint8_t orig_type = frag_hdr[12];
+
+    if(total == 0 || total > BC_FRAG_MAX_PARTS || index >= total) return 0;
+
+    const uint8_t* frag_data = &pkt_data[payload_offset + BC_FRAG_HEADER_SIZE];
+    uint16_t frag_data_len = pkt_len - payload_offset - BC_FRAG_HEADER_SIZE;
+
+    uint32_t now = furi_get_tick();
+
+    // Find existing fragment set or allocate new one
+    BcFragmentSet* set = NULL;
+    for(int i = 0; i < BC_MAX_FRAG_SETS; i++) {
+        if(ft->sets[i].active && memcmp(ft->sets[i].fragment_id, frag_id, 8) == 0) {
+            set = &ft->sets[i];
+            break;
+        }
+    }
+
+    if(!set) {
+        // Expire old sets and find a free slot
+        for(int i = 0; i < BC_MAX_FRAG_SETS; i++) {
+            if(ft->sets[i].active &&
+               (now - ft->sets[i].start_tick) > BC_FRAG_TIMEOUT_MS) {
+                ft->sets[i].active = false;
+            }
+            if(!ft->sets[i].active && !set) {
+                set = &ft->sets[i];
+            }
+        }
+        if(!set) return 0; // no free slot
+
+        memset(set, 0, sizeof(BcFragmentSet));
+        memcpy(set->fragment_id, frag_id, 8);
+        set->total_parts = total;
+        set->original_type = orig_type;
+        set->start_tick = now;
+        set->active = true;
+        // Save header from first fragment for reassembly
+        memcpy(set->header, pkt_data, BC_HEADER_SIZE + BC_SENDER_ID_SIZE);
+    }
+
+    // Store fragment data
+    uint16_t offset = index * BC_FRAG_MAX_DATA;
+    if(offset + frag_data_len <= sizeof(set->data)) {
+        memcpy(&set->data[offset], frag_data, frag_data_len);
+        uint16_t end = offset + frag_data_len;
+        if(end > set->data_len) set->data_len = end;
+        set->received_mask |= (1u << index);
+    }
+
+    // Check if all parts received
+    uint16_t expected_mask = (1u << total) - 1;
+    if((set->received_mask & expected_mask) != expected_mask) return 0;
+
+    // Reassemble: build a complete packet with the original type
+    if(BC_HEADER_SIZE + BC_SENDER_ID_SIZE + set->data_len > out_buf_sz) {
+        set->active = false;
+        return 0;
+    }
+
+    memcpy(out_buf, set->header, BC_HEADER_SIZE + BC_SENDER_ID_SIZE);
+    out_buf[1] = set->original_type; // restore original packet type
+    put_u16_be(&out_buf[12], set->data_len); // update payload length
+    out_buf[2] = 0; // reassembled packets get TTL=0 (no further relay)
+    memcpy(&out_buf[BC_HEADER_SIZE + BC_SENDER_ID_SIZE], set->data, set->data_len);
+
+    uint16_t total_len = BC_HEADER_SIZE + BC_SENDER_ID_SIZE + set->data_len;
+    set->active = false;
+
+    FURI_LOG_I("BcFrag", "Reassembled %d bytes (type=0x%02X, %d parts)",
+        total_len, set->original_type, total);
+
+    return total_len;
+}
+
+bool bc_fragment_send(
+    const uint8_t* pkt_data,
+    uint16_t pkt_len,
+    const uint8_t* sender_id,
+    uint8_t ttl,
+    BcFragSendFn send_fn,
+    void* send_ctx) {
+
+    uint16_t payload_offset = BC_HEADER_SIZE + BC_SENDER_ID_SIZE;
+    if(pkt_len <= payload_offset) return false;
+
+    uint8_t orig_type = pkt_data[1];
+    const uint8_t* payload = &pkt_data[payload_offset];
+    uint16_t payload_len = pkt_len - payload_offset;
+
+    uint16_t total = (payload_len + BC_FRAG_MAX_DATA - 1) / BC_FRAG_MAX_DATA;
+    if(total > BC_FRAG_MAX_PARTS) return false;
+
+    // Generate random fragment ID
+    uint8_t frag_id[8];
+    furi_hal_random_fill_buf(frag_id, 8);
+
+    for(uint16_t i = 0; i < total; i++) {
+        uint16_t offset = i * BC_FRAG_MAX_DATA;
+        uint16_t chunk_len = payload_len - offset;
+        if(chunk_len > BC_FRAG_MAX_DATA) chunk_len = BC_FRAG_MAX_DATA;
+
+        uint8_t frag_pkt[512];
+        // Build fragment packet header
+        uint16_t frag_payload_len = BC_FRAG_HEADER_SIZE + chunk_len;
+        uint16_t hdr_len = bc_encode_header(
+            frag_pkt, sizeof(frag_pkt), BC_TYPE_FRAGMENT, ttl, 0,
+            sender_id, NULL, frag_payload_len);
+
+        // Fragment sub-header
+        uint16_t pos = hdr_len;
+        memcpy(&frag_pkt[pos], frag_id, 8); pos += 8;
+        frag_pkt[pos++] = (i >> 8) & 0xFF;
+        frag_pkt[pos++] = i & 0xFF;
+        frag_pkt[pos++] = (total >> 8) & 0xFF;
+        frag_pkt[pos++] = total & 0xFF;
+        frag_pkt[pos++] = orig_type;
+
+        // Fragment data
+        memcpy(&frag_pkt[pos], &payload[offset], chunk_len);
+        pos += chunk_len;
+
+        if(!send_fn(frag_pkt, pos, send_ctx)) return false;
+    }
+    return true;
+}
+
+// ── Deduplication ───────────────────────────────────────────────────
+
+// Simple FNV-1a hash for payload dedup
+static uint32_t bc_hash_payload(const uint8_t* data, uint16_t len) {
+    uint32_t hash = 0x811C9DC5u;
+    for(uint16_t i = 0; i < len; i++) {
+        hash ^= data[i];
+        hash *= 0x01000193u;
+    }
+    return hash;
+}
+
+void bc_dedup_init(BcDedupTable* dt) {
+    memset(dt, 0, sizeof(BcDedupTable));
+}
+
+bool bc_dedup_check(BcDedupTable* dt, const BcPacketHeader* hdr,
+                    const uint8_t* payload, uint16_t payload_len) {
+    uint32_t phash = bc_hash_payload(payload, payload_len);
+    uint64_t now_ms = hdr->timestamp; // use packet timestamp for consistency
+
+    // Check existing entries
+    for(uint16_t i = 0; i < BC_DEDUP_MAX_ENTRIES; i++) {
+        if(!dt->entries[i].active) continue;
+
+        // Expire old entries
+        if(now_ms > dt->entries[i].timestamp &&
+           (now_ms - dt->entries[i].timestamp) > BC_DEDUP_WINDOW_MS) {
+            dt->entries[i].active = false;
+            continue;
+        }
+
+        // Check for match
+        if(dt->entries[i].timestamp == hdr->timestamp &&
+           dt->entries[i].payload_hash == phash &&
+           memcmp(dt->entries[i].sender_id, hdr->sender_id, BC_SENDER_ID_SIZE) == 0) {
+            return true; // DUPLICATE
+        }
+    }
+
+    // Not a duplicate — add to table
+    BcDedupEntry* entry = &dt->entries[dt->next_idx];
+    entry->timestamp = hdr->timestamp;
+    memcpy(entry->sender_id, hdr->sender_id, BC_SENDER_ID_SIZE);
+    entry->payload_hash = phash;
+    entry->active = true;
+    dt->next_idx = (dt->next_idx + 1) % BC_DEDUP_MAX_ENTRIES;
+    if(dt->count < BC_DEDUP_MAX_ENTRIES) dt->count++;
+
+    return false; // NOT duplicate
+}
+
+// ── Relay ───────────────────────────────────────────────────────────
+
+uint8_t bc_relay_should_forward(
+    const BcPacketHeader* hdr,
+    const uint8_t* our_sender_id,
+    uint8_t peer_count) {
+    // Don't relay our own packets
+    if(memcmp(hdr->sender_id, our_sender_id, BC_SENDER_ID_SIZE) == 0) return 0;
+
+    // Don't relay if TTL is 0
+    if(hdr->ttl == 0) return 0;
+
+    uint8_t new_ttl = hdr->ttl - 1;
+
+    // Always relay if TTL >= BC_RELAY_ALWAYS_TTL
+    if(hdr->ttl >= BC_RELAY_ALWAYS_TTL) return new_ttl;
+
+    // Probability-based relay dampening based on network size
+    uint8_t probability;
+    if(peer_count <= 10) {
+        probability = 100;
+    } else if(peer_count <= 30) {
+        probability = 85;
+    } else if(peer_count <= 50) {
+        probability = 70;
+    } else if(peer_count <= 100) {
+        probability = 55;
+    } else {
+        probability = 40;
+    }
+
+    // Simple random check using furi_hal_random
+    uint8_t roll;
+    furi_hal_random_fill_buf(&roll, 1);
+    roll = roll % 100;
+
+    return (roll < probability) ? new_ttl : 0;
+}

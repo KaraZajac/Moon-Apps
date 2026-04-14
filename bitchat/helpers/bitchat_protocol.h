@@ -51,6 +51,20 @@
 #define BC_SIGNATURE_SIZE     64
 #define BC_PAD_BLOCK_256      256
 
+// Fragment constants
+#define BC_FRAG_HEADER_SIZE   13  // fragmentID(8) + index(2) + total(2) + origType(1)
+#define BC_FRAG_THRESHOLD     512 // fragment packets larger than this
+#define BC_FRAG_MAX_DATA      469 // 512 - BC_FRAG_HEADER_SIZE - overhead
+#define BC_FRAG_TIMEOUT_MS    30000
+#define BC_FRAG_MAX_PARTS     32
+
+// Dedup constants
+#define BC_DEDUP_MAX_ENTRIES  256
+#define BC_DEDUP_WINDOW_MS    300000 // 5 minutes
+
+// Relay constants
+#define BC_RELAY_ALWAYS_TTL   4  // Always relay if TTL >= this
+
 // ── Data Structures ──────────────────────────────────────────────────
 
 typedef struct {
@@ -159,3 +173,76 @@ bool bc_decode_message(
     const uint8_t* payload,
     uint16_t payload_len,
     BcMessage* msg);
+
+// ── Fragment Reassembly ─────────────────────────────────────────────
+
+typedef struct {
+    uint8_t fragment_id[8];
+    uint8_t original_type;
+    uint16_t total_parts;
+    uint16_t received_mask; // bitmask of received parts (up to 16)
+    uint8_t data[2048];
+    uint16_t data_len;
+    uint32_t start_tick;
+    bool active;
+    // Copy header from first fragment for reassembly
+    uint8_t header[BC_HEADER_SIZE + BC_SENDER_ID_SIZE];
+} BcFragmentSet;
+
+#define BC_MAX_FRAG_SETS 4
+
+typedef struct {
+    BcFragmentSet sets[BC_MAX_FRAG_SETS];
+} BcFragmentTable;
+
+void bc_fragment_init(BcFragmentTable* ft);
+
+// Process a FRAGMENT packet. Returns reassembled packet + length if complete, NULL otherwise.
+// out_buf must be at least 2048 bytes. Returns total reassembled size (0 if incomplete).
+uint16_t bc_fragment_process(
+    BcFragmentTable* ft,
+    const uint8_t* pkt_data,
+    uint16_t pkt_len,
+    uint8_t* out_buf,
+    uint16_t out_buf_sz);
+
+// Fragment a large packet into FRAGMENT packets and call send_fn for each.
+typedef bool (*BcFragSendFn)(const uint8_t* data, uint16_t len, void* ctx);
+bool bc_fragment_send(
+    const uint8_t* pkt_data,
+    uint16_t pkt_len,
+    const uint8_t* sender_id,
+    uint8_t ttl,
+    BcFragSendFn send_fn,
+    void* send_ctx);
+
+// ── Deduplication ───────────────────────────────────────────────────
+
+typedef struct {
+    uint64_t timestamp;
+    uint8_t sender_id[BC_SENDER_ID_SIZE];
+    uint32_t payload_hash;
+    bool active;
+} BcDedupEntry;
+
+typedef struct {
+    BcDedupEntry entries[BC_DEDUP_MAX_ENTRIES];
+    uint16_t count;
+    uint16_t next_idx; // circular write index
+} BcDedupTable;
+
+void bc_dedup_init(BcDedupTable* dt);
+
+// Check if packet is a duplicate. Returns true if DUPLICATE (should drop).
+// If not duplicate, adds to the table.
+bool bc_dedup_check(BcDedupTable* dt, const BcPacketHeader* hdr,
+                    const uint8_t* payload, uint16_t payload_len);
+
+// ── Relay ───────────────────────────────────────────────────────────
+
+// Determine if a packet should be relayed based on TTL and network size.
+// Returns the new TTL (decremented), or 0 if should not relay.
+uint8_t bc_relay_should_forward(
+    const BcPacketHeader* hdr,
+    const uint8_t* our_sender_id,
+    uint8_t peer_count);
