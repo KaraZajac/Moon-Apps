@@ -2,6 +2,7 @@
 
 #include <furi.h>
 #include <furi_hal.h>
+#include "helpers/noise_state.h"
 #include <gui/gui.h>
 #include <gui/view.h>
 #include <gui/view_dispatcher.h>
@@ -53,6 +54,11 @@ typedef struct {
     uint16_t central_handle;    // GATT connection handle (central role)
     uint16_t central_char;      // their BitChat characteristic value handle
     bool central_active;        // we have an active central connection to this peer
+
+    // Noise encryption session
+    NoiseSession noise_session;
+    NoiseHandshakeState noise_hs;
+    bool noise_hs_active;       // handshake in progress
 } BcPeer;
 
 typedef struct {

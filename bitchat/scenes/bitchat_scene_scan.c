@@ -266,6 +266,41 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
                     ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
                 }
             }
+
+            // Initiate Noise handshake with this peer (we're the initiator)
+            if(app->selected_scan_idx < app->scan_result_count) {
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                // Find the peer entry we just created
+                for(uint8_t pi = 0; pi < app->peer_count; pi++) {
+                    if(app->peers[pi].central_active &&
+                       app->peers[pi].central_handle == app->connection_handle) {
+                        BcPeer* peer = &app->peers[pi];
+                        noise_handshake_init(&peer->noise_hs, NoiseRoleInitiator,
+                            app->identity.noise_secret, app->identity.noise_public);
+                        peer->noise_hs_active = true;
+
+                        // Write handshake message 1: -> e
+                        uint8_t hs_out[64];
+                        uint16_t hs_len = noise_handshake_write(
+                            &peer->noise_hs, hs_out, sizeof(hs_out));
+                        if(hs_len > 0) {
+                            uint8_t hs_pkt[128];
+                            uint16_t hs_hdr = bc_encode_header(
+                                hs_pkt, sizeof(hs_pkt), BC_TYPE_NOISE_HS, BC_DEFAULT_TTL,
+                                0, app->identity.peer_id, hs_out, hs_len);
+                            memcpy(&hs_pkt[hs_hdr], hs_out, hs_len);
+                            uint16_t hs_total = hs_hdr + hs_len;
+                            furi_delay_ms(100);
+                            ble_gatt_client_write(
+                                app->connection_handle, app->bc_char_handle,
+                                hs_pkt, hs_total);
+                            FURI_LOG_I(TAG, "Sent Noise handshake msg1 (%d bytes)", hs_total);
+                        }
+                        break;
+                    }
+                }
+                furi_mutex_release(app->mutex);
+            }
             scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
         }
         return true;

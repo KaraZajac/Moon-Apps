@@ -246,6 +246,114 @@ static void process_incoming_packet(BitchatApp* app) {
         furi_mutex_release(app->mutex);
         break;
     }
+    case BC_TYPE_NOISE_HS: {
+        // Noise handshake message — find or create peer's handshake state
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        BcPeer* peer = NULL;
+        for(uint8_t i = 0; i < app->peer_count; i++) {
+            if(memcmp(app->peers[i].peer_id, hdr.sender_id, BC_SENDER_ID_SIZE) == 0) {
+                peer = &app->peers[i];
+                break;
+            }
+        }
+
+        if(!peer) {
+            FURI_LOG_W(TAG, "Noise handshake from unknown peer");
+            furi_mutex_release(app->mutex);
+            break;
+        }
+
+        if(!peer->noise_hs_active) {
+            // Incoming handshake — we're the responder
+            noise_handshake_init(&peer->noise_hs, NoiseRoleResponder,
+                app->identity.noise_secret, app->identity.noise_public);
+            peer->noise_hs_active = true;
+        }
+
+        // Read the handshake message
+        if(!noise_handshake_read(&peer->noise_hs, payload, payload_len)) {
+            FURI_LOG_E(TAG, "Noise handshake read failed");
+            peer->noise_hs_active = false;
+            furi_mutex_release(app->mutex);
+            break;
+        }
+
+        // Write our response (if we have one)
+        uint8_t hs_out[128];
+        uint16_t hs_len = noise_handshake_write(&peer->noise_hs, hs_out, sizeof(hs_out));
+        if(hs_len > 0) {
+            // Send handshake response as type 0x10 packet
+            uint8_t hs_pkt[256];
+            uint16_t hs_hdr_len = bc_encode_header(
+                hs_pkt, sizeof(hs_pkt), BC_TYPE_NOISE_HS, BC_DEFAULT_TTL,
+                BC_FLAG_HAS_RECIPIENT, app->identity.peer_id, hs_out, hs_len);
+            // Add recipient ID
+            memcpy(&hs_pkt[hs_hdr_len], hdr.sender_id, BC_SENDER_ID_SIZE);
+            memcpy(&hs_pkt[hs_hdr_len + BC_SENDER_ID_SIZE], hs_out, hs_len);
+            uint16_t hs_total = hs_hdr_len + BC_SENDER_ID_SIZE + hs_len;
+
+            if(app->svc) ble_svc_bitchat_tx(app->svc, hs_pkt, hs_total);
+            if(peer->central_active && peer->central_char)
+                ble_gatt_client_write(peer->central_handle, peer->central_char, hs_pkt, hs_total);
+        }
+
+        // Check if handshake is complete
+        if(peer->noise_hs.complete) {
+            noise_handshake_split(&peer->noise_hs, &peer->noise_session);
+            peer->noise_hs_active = false;
+            FURI_LOG_I(TAG, "Noise session established with %s", peer->nickname);
+
+            char sys_msg[48];
+            snprintf(sys_msg, sizeof(sys_msg), "%s: encrypted", peer->nickname);
+            bitchat_add_chat_message(app, "*", sys_msg);
+        }
+
+        furi_mutex_release(app->mutex);
+        break;
+    }
+    case BC_TYPE_NOISE_ENC: {
+        // Encrypted message — find peer's session and decrypt
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+        BcPeer* peer = NULL;
+        for(uint8_t i = 0; i < app->peer_count; i++) {
+            if(memcmp(app->peers[i].peer_id, hdr.sender_id, BC_SENDER_ID_SIZE) == 0) {
+                peer = &app->peers[i];
+                break;
+            }
+        }
+
+        if(!peer || !peer->noise_session.active) {
+            FURI_LOG_W(TAG, "Encrypted msg from peer without session");
+            furi_mutex_release(app->mutex);
+            break;
+        }
+
+        uint8_t decrypted[256];
+        uint16_t dec_len = noise_session_decrypt(
+            &peer->noise_session, payload, payload_len, decrypted, sizeof(decrypted));
+
+        if(dec_len > 0) {
+            // NoisePayload: [1B type][data]
+            if(dec_len >= 2 && decrypted[0] == 0x01) {
+                // PRIVATE_MESSAGE — extract content
+                // Simple: just treat bytes 1..end as UTF-8 text
+                char content[BC_MAX_MSG_CONTENT + 1];
+                uint16_t content_len = dec_len - 1;
+                if(content_len > BC_MAX_MSG_CONTENT) content_len = BC_MAX_MSG_CONTENT;
+                memcpy(content, &decrypted[1], content_len);
+                content[content_len] = '\0';
+
+                FURI_LOG_I(TAG, "Encrypted msg from %s: %s", peer->nickname, content);
+                bitchat_add_chat_message(app, peer->nickname, content);
+                notification_message(app->notifications, &sequence_single_vibro);
+            }
+        } else {
+            FURI_LOG_W(TAG, "Decryption failed");
+        }
+
+        furi_mutex_release(app->mutex);
+        break;
+    }
     default:
         FURI_LOG_D(TAG, "Unhandled packet type: 0x%02X", hdr.type);
         break;
