@@ -195,17 +195,15 @@ uint16_t bc_build_signed_announce_packet(
     memcpy(&buf[hdr_len], payload, payload_len);
     uint16_t data_end = hdr_len + payload_len;
 
-    // Build signing data: re-encode packet with ttl=0 and NO HAS_SIGNATURE flag
-    // Android's toBinaryDataForSigning() creates a new packet with signature=null,
-    // which clears the HAS_SIGNATURE bit in flags, then encodes + pads it.
+    // Build signing data: copy the packet, set ttl=0 and clear HAS_SIGNATURE flag.
+    // CRITICAL: must use the SAME timestamp as the actual packet (not a new one).
+    // Android's toBinaryDataForSigning() copies the received packet and modifies
+    // ttl + flags in place, then re-encodes + pads.
     uint8_t sign_buf[BC_PAD_BLOCK_256];
-
-    // Re-encode header WITHOUT HAS_SIGNATURE flag, with ttl=0
-    uint16_t sign_hdr_len = bc_encode_header(
-        sign_buf, sizeof(sign_buf), BC_TYPE_ANNOUNCE, 0 /* ttl=0 */,
-        0 /* no flags — HAS_SIGNATURE cleared */, sender_id, payload, payload_len);
-    memcpy(&sign_buf[sign_hdr_len], payload, payload_len);
-    uint16_t sign_data_len = sign_hdr_len + payload_len;
+    memcpy(sign_buf, buf, data_end);
+    sign_buf[2] = 0;  // ttl = 0
+    sign_buf[11] = 0; // flags = 0 (HAS_SIGNATURE cleared)
+    uint16_t sign_data_len = data_end;
 
     // Apply PKCS#7 padding — Android signs over the PADDED data
     sign_data_len = bc_apply_padding(sign_buf, sign_data_len, sizeof(sign_buf));
@@ -244,13 +242,13 @@ uint16_t bc_build_signed_broadcast_packet(
     memcpy(&buf[hdr_len], content, content_len);
     uint16_t data_end = hdr_len + content_len;
 
-    // Build signing data: re-encode with ttl=0, no HAS_SIGNATURE, padded
+    // Build signing data: copy packet, set ttl=0, clear HAS_SIGNATURE
+    // CRITICAL: reuse same timestamp from actual packet header
     uint8_t sign_buf[BC_PAD_BLOCK_256];
-    uint16_t sign_hdr_len = bc_encode_header(
-        sign_buf, sizeof(sign_buf), BC_TYPE_MESSAGE, 0,
-        0, sender_id, (const uint8_t*)content, content_len);
-    memcpy(&sign_buf[sign_hdr_len], content, content_len);
-    uint16_t sign_data_len = sign_hdr_len + content_len;
+    memcpy(sign_buf, buf, data_end);
+    sign_buf[2] = 0;  // ttl = 0
+    sign_buf[11] = 0; // flags = 0
+    uint16_t sign_data_len = data_end;
     sign_data_len = bc_apply_padding(sign_buf, sign_data_len, sizeof(sign_buf));
 
     uint8_t sig[BC_SIGNATURE_SIZE];

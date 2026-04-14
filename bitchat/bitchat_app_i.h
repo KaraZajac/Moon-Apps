@@ -42,6 +42,8 @@ typedef enum {
 typedef struct {
     uint8_t peer_id[BC_SENDER_ID_SIZE];
     char nickname[BC_MAX_NICKNAME + 1];
+    uint8_t ed25519_pubkey[32]; // signing public key (from announce TLV)
+    bool has_signing_key;
     uint8_t address[6];
     uint8_t address_type;
     int8_t rssi;

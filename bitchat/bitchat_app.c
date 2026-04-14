@@ -64,17 +64,21 @@ void bitchat_gatt_callback(BleGattClientEvent* event, void* context) {
 
         if(len == 0) break; // ignore empty notifications
 
+        furi_mutex_acquire(app->mutex, FuriWaitForever);
+
         if(is_first) {
             // First fragment — start reassembly
             app->rx_len = 0;
         }
 
-        // Append fragment at correct offset
+        // Append fragment at correct offset (with bounds check)
         if(real_offset + len <= sizeof(app->rx_buf)) {
             memcpy(&app->rx_buf[real_offset], event->notification.data, len);
             uint16_t end = real_offset + len;
             if(end > app->rx_len) app->rx_len = end;
         }
+
+        furi_mutex_release(app->mutex);
 
         if(!is_first && app->rx_len > 0) {
             // Last fragment received — process complete packet
@@ -119,10 +123,12 @@ static void bc_app_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig,
 static uint16_t bitchat_svc_data_callback(BitchatServiceEvent event, void* context) {
     BitchatApp* app = context;
     if(event.event == BitchatServiceEventDataReceived && event.data.size > 0) {
-        // Copy into rx_buf and send notification event
+        // Copy into rx_buf (protected by mutex) and send notification event
         if(event.data.size <= sizeof(app->rx_buf)) {
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
             memcpy(app->rx_buf, event.data.buffer, event.data.size);
             app->rx_len = event.data.size;
+            furi_mutex_release(app->mutex);
             view_dispatcher_send_custom_event(
                 app->view_dispatcher, BitchatCustomEventNotification);
         }

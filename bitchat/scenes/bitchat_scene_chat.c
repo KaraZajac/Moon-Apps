@@ -1,4 +1,5 @@
 #include "../bitchat_app_i.h"
+#include "../crypto/ed25519_donna/ed25519.h"
 #include <gui/modules/widget.h>
 
 static void bc_chat_sign_wrapper(const uint8_t* data, uint16_t len, uint8_t* sig, void* ctx) {
@@ -60,6 +61,56 @@ static void process_incoming_packet(BitchatApp* app) {
     uint16_t payload_len = app->rx_len - payload_offset;
     if(payload_len > hdr.payload_len) payload_len = hdr.payload_len;
 
+    // Verify Ed25519 signature if present
+    if(hdr.flags & BC_FLAG_HAS_SIGNATURE) {
+        uint16_t sig_offset = payload_offset + hdr.payload_len;
+        if(sig_offset + BC_SIGNATURE_SIZE <= app->rx_len) {
+            const uint8_t* signature = &app->rx_buf[sig_offset];
+            const uint8_t* verify_key = NULL;
+
+            if(hdr.type == BC_TYPE_ANNOUNCE) {
+                // Self-authenticating: key is in the announce TLV
+                BcAnnounce tmp;
+                if(bc_decode_announce(payload, payload_len, &tmp) && tmp.has_ed25519_key) {
+                    verify_key = tmp.ed25519_pubkey;
+                }
+            } else {
+                // Look up signing key from peer table
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
+                for(uint8_t i = 0; i < app->peer_count; i++) {
+                    if(memcmp(app->peers[i].peer_id, hdr.sender_id, BC_SENDER_ID_SIZE) == 0 &&
+                       app->peers[i].has_signing_key) {
+                        verify_key = app->peers[i].ed25519_pubkey;
+                        break;
+                    }
+                }
+                furi_mutex_release(app->mutex);
+            }
+
+            if(verify_key) {
+                // Reconstruct signing data: packet without signature, ttl=0, flags=0, padded
+                uint8_t verify_buf[BC_PAD_BLOCK_256];
+                uint16_t verify_data_len = sig_offset;
+                if(verify_data_len <= sizeof(verify_buf)) {
+                    memcpy(verify_buf, app->rx_buf, verify_data_len);
+                    verify_buf[2] = 0;  // ttl = 0
+                    verify_buf[11] = 0; // flags = 0 (clear HAS_SIGNATURE)
+                    verify_data_len = bc_apply_padding(
+                        verify_buf, verify_data_len, sizeof(verify_buf));
+
+                    if(ed25519_sign_open(verify_buf, verify_data_len,
+                                         verify_key, signature) != 0) {
+                        FURI_LOG_W(TAG, "Signature INVALID — dropping packet");
+                        return;
+                    }
+                    FURI_LOG_D(TAG, "Signature verified OK");
+                }
+            } else {
+                FURI_LOG_D(TAG, "No verify key available, accepting unsigned");
+            }
+        }
+    }
+
     switch(hdr.type) {
     case BC_TYPE_ANNOUNCE: {
         BcAnnounce announce;
@@ -71,6 +122,10 @@ static void process_incoming_packet(BitchatApp* app) {
                 if(memcmp(app->peers[i].peer_id, hdr.sender_id, BC_SENDER_ID_SIZE) == 0) {
                     strncpy(app->peers[i].nickname, announce.nickname, BC_MAX_NICKNAME);
                     app->peers[i].last_seen = furi_get_tick();
+                    if(announce.has_ed25519_key) {
+                        memcpy(app->peers[i].ed25519_pubkey, announce.ed25519_pubkey, 32);
+                        app->peers[i].has_signing_key = true;
+                    }
                     found = true;
                     break;
                 }
@@ -79,6 +134,10 @@ static void process_incoming_packet(BitchatApp* app) {
                 BcPeer* peer = &app->peers[app->peer_count];
                 memcpy(peer->peer_id, hdr.sender_id, BC_SENDER_ID_SIZE);
                 strncpy(peer->nickname, announce.nickname, BC_MAX_NICKNAME);
+                if(announce.has_ed25519_key) {
+                    memcpy(peer->ed25519_pubkey, announce.ed25519_pubkey, 32);
+                    peer->has_signing_key = true;
+                }
                 peer->last_seen = furi_get_tick();
                 peer->connected = true;
                 app->peer_count++;
