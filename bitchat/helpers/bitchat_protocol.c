@@ -202,7 +202,7 @@ uint16_t bc_build_signed_announce_packet(
     uint8_t sign_buf[BC_PAD_BLOCK_256];
     memcpy(sign_buf, buf, data_end);
     sign_buf[2] = 0;  // ttl = 0
-    sign_buf[11] = 0; // flags = 0 (HAS_SIGNATURE cleared)
+    sign_buf[11] &= ~BC_FLAG_HAS_SIGNATURE; // clear only HAS_SIGNATURE bit
     uint16_t sign_data_len = data_end;
 
     // Apply PKCS#7 padding — Android signs over the PADDED data
@@ -247,7 +247,7 @@ uint16_t bc_build_signed_broadcast_packet(
     uint8_t sign_buf[BC_PAD_BLOCK_256];
     memcpy(sign_buf, buf, data_end);
     sign_buf[2] = 0;  // ttl = 0
-    sign_buf[11] = 0; // flags = 0
+    sign_buf[11] &= ~BC_FLAG_HAS_SIGNATURE; // clear only HAS_SIGNATURE bit
     uint16_t sign_data_len = data_end;
     sign_data_len = bc_apply_padding(sign_buf, sign_data_len, sizeof(sign_buf));
 

@@ -56,7 +56,13 @@ static void hmac_sha256(const uint8_t* key, size_t key_len,
 static void hkdf2(const uint8_t ck[32], const uint8_t* ikm, size_t ikm_len,
                    uint8_t out1[32], uint8_t out2[32]) {
     uint8_t prk[32];
-    hmac_sha256(ck, 32, ikm, ikm_len, prk);
+    // Handle NULL ikm (used by split()) — HMAC with empty input is valid per RFC
+    uint8_t empty = 0;
+    if(ikm == NULL || ikm_len == 0) {
+        hmac_sha256(ck, 32, &empty, 0, prk);
+    } else {
+        hmac_sha256(ck, 32, ikm, ikm_len, prk);
+    }
 
     // T1 = HMAC(PRK, 0x01)
     uint8_t one = 0x01;
@@ -423,37 +429,35 @@ uint16_t noise_session_decrypt(NoiseSession* session,
     uint16_t ct_len = enc_len - 4 - NOISE_TAG_SIZE;
     if(ct_len > out_buf_sz) return 0;
 
-    // Read nonce
+    // Read explicit nonce from packet (big-endian)
     uint32_t n = ((uint32_t)encrypted[0] << 24) | ((uint32_t)encrypted[1] << 16) |
                  ((uint32_t)encrypted[2] << 8) | encrypted[3];
 
-    // Copy ciphertext to output
+    // Replay protection: reject nonces we've already seen
+    // Simple high-water mark — only accept nonces >= recv_cipher.n
+    if(n < session->recv_cipher.n) {
+        FURI_LOG_W(TAG, "Replay detected: nonce %lu < %lu", (unsigned long)n,
+            (unsigned long)session->recv_cipher.n);
+        return 0;
+    }
+
     memcpy(out_buf, &encrypted[4], ct_len);
     const uint8_t* tag = &encrypted[4 + ct_len];
 
-    // Build IETF nonce
+    // Build IETF 12-byte nonce: [4 zero bytes][8 bytes LE counter]
     uint8_t nonce[12] = {0};
     nonce[4] = (n) & 0xFF;
     nonce[5] = (n >> 8) & 0xFF;
     nonce[6] = (n >> 16) & 0xFF;
     nonce[7] = (n >> 24) & 0xFF;
 
-    // Temporarily set the recv cipher's nonce to the received value
-    uint32_t saved_n = session->recv_cipher.n;
-    session->recv_cipher.n = n;
-
     if(!chacha20poly1305_decrypt(session->recv_cipher.k, nonce, NULL, 0,
                                  out_buf, ct_len, tag)) {
-        session->recv_cipher.n = saved_n; // restore on failure
         return 0;
     }
 
-    // Update nonce counter to max(current, received+1)
-    if(n + 1 > session->recv_cipher.n) {
-        session->recv_cipher.n = n + 1;
-    } else {
-        session->recv_cipher.n = saved_n; // keep higher value
-    }
+    // Advance high-water mark (never go backward)
+    session->recv_cipher.n = n + 1;
 
     return ct_len;
 }

@@ -149,7 +149,7 @@ static void process_incoming_packet(BitchatApp* app) {
                 if(verify_data_len <= sizeof(verify_buf)) {
                     memcpy(verify_buf, app->rx_buf, verify_data_len);
                     verify_buf[2] = 0;  // ttl = 0
-                    verify_buf[11] = 0; // flags = 0 (clear HAS_SIGNATURE)
+                    verify_buf[11] &= ~BC_FLAG_HAS_SIGNATURE; // clear only HAS_SIGNATURE bit
                     verify_data_len = bc_apply_padding(
                         verify_buf, verify_data_len, sizeof(verify_buf));
 
@@ -422,7 +422,9 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             return true;
         } else if(event.event == BitchatCustomEventMsgSend) {
             // User submitted a message — send to ALL connected peers
+            // Use encrypted channel when Noise session is active
             if(app->input_buf[0] != '\0') {
+                // Always build the broadcast (unencrypted) packet for peers without sessions
                 uint8_t pkt[BC_PAD_BLOCK_256];
                 uint16_t pkt_len = bc_build_signed_broadcast_packet(
                     pkt, sizeof(pkt), app->identity.peer_id, app->input_buf,
@@ -431,25 +433,62 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
                 if(pkt_len > 0) {
                     FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);
 
-                    // Send via peripheral notification (reaches peers connected to us)
-                    if(app->svc) {
-                        ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
-                    }
-
-                    // Send via GATT client write to each peer we connected to as central
                     furi_mutex_acquire(app->mutex, FuriWaitForever);
                     for(uint8_t i = 0; i < app->peer_count; i++) {
-                        if(app->peers[i].central_active && app->peers[i].central_char != 0) {
+                        BcPeer* peer = &app->peers[i];
+                        if(!peer->central_active || peer->central_char == 0) continue;
+
+                        if(peer->noise_session.active) {
+                            // Send encrypted private message (type 0x11)
+                            // NoisePayload: [0x01 = PRIVATE_MESSAGE][UTF-8 content]
+                            uint8_t payload_buf[256];
+                            uint16_t content_len = strlen(app->input_buf);
+                            if(content_len > 200) content_len = 200;
+                            payload_buf[0] = 0x01; // PRIVATE_MESSAGE
+                            memcpy(&payload_buf[1], app->input_buf, content_len);
+
+                            uint8_t enc_buf[300];
+                            uint16_t enc_len = noise_session_encrypt(
+                                &peer->noise_session,
+                                payload_buf, 1 + content_len,
+                                enc_buf, sizeof(enc_buf));
+
+                            if(enc_len > 0) {
+                                // Build type 0x11 packet with encrypted payload
+                                uint8_t enc_pkt[512];
+                                uint16_t hdr_len = bc_encode_header(
+                                    enc_pkt, sizeof(enc_pkt),
+                                    BC_TYPE_NOISE_ENC, BC_DEFAULT_TTL,
+                                    BC_FLAG_HAS_RECIPIENT,
+                                    app->identity.peer_id, enc_buf, enc_len);
+                                // Append recipient ID
+                                memcpy(&enc_pkt[hdr_len], peer->peer_id, BC_SENDER_ID_SIZE);
+                                memcpy(&enc_pkt[hdr_len + BC_SENDER_ID_SIZE], enc_buf, enc_len);
+                                uint16_t total = hdr_len + BC_SENDER_ID_SIZE + enc_len;
+
+                                furi_delay_ms(20);
+                                ble_gatt_client_write(
+                                    peer->central_handle, peer->central_char,
+                                    enc_pkt, total);
+                                FURI_LOG_I(TAG, "Sent encrypted msg to %s (%d bytes)",
+                                    peer->nickname, total);
+                            }
+                        } else {
+                            // No session — send unencrypted broadcast
                             furi_delay_ms(20);
                             ble_gatt_client_write(
-                                app->peers[i].central_handle,
-                                app->peers[i].central_char,
+                                peer->central_handle, peer->central_char,
                                 pkt, pkt_len);
                         }
                     }
                     furi_mutex_release(app->mutex);
 
-                    // Also send via legacy single connection (backward compat)
+                    // Always send unencrypted broadcast via peripheral (for non-session peers)
+                    if(app->svc) {
+                        ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+                    }
+
+                    // Legacy single connection
                     if(app->connected && app->bc_char_handle != 0) {
                         furi_delay_ms(20);
                         ble_gatt_client_write(

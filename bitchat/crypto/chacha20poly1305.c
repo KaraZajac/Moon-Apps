@@ -82,20 +82,20 @@ static void poly1305_block(Poly1305* st, const uint8_t* msg, size_t len, uint8_t
     while(off < len) {
         size_t want = len - off;
         if(want > 16) want = 16;
-        uint32_t t[5] = {0};
-        uint8_t block[17] = {0};
+
+        // Build a zero-padded 17-byte block: data || hibit at position [want]
+        // This correctly handles partial blocks per RFC 8439 Section 2.5.1:
+        // For each block, append 0x01 byte after the data, then pad with zeros to 17 bytes
+        uint8_t block[18] = {0};
         memcpy(block, &msg[off], want);
-        block[want] = hibit;
-        t[0] = load32_le(&block[0]) & 0x03ffffff;
-        t[1] = (load32_le(&block[3])>>2) & 0x03ffffff;
-        t[2] = (load32_le(&block[6])>>4) & 0x03ffffff;
-        t[3] = (load32_le(&block[9])>>6) & 0x03ffffff;
-        t[4] = (load32_le(&block[12])>>8);
-        if(want < 16) t[want/4 + ((want%4)?1:0) - (want==16?0:0)] |= 0; // simplified
-        // Actually need to set the high bit properly for partial blocks
-        // For simplicity, just add hibit at the right position
-        st->h[0] += t[0]; st->h[1] += t[1]; st->h[2] += t[2];
-        st->h[3] += t[3]; st->h[4] += t[4] | ((uint32_t)hibit << (want==16 ? 24 : (want%4)*8));
+        block[want] = hibit; // 0x01 for message blocks, per Poly1305 spec
+
+        // Parse the 17-byte block as a 130-bit little-endian number in 5x26-bit limbs
+        st->h[0] += load32_le(&block[0]) & 0x03ffffff;
+        st->h[1] += (load32_le(&block[3]) >> 2) & 0x03ffffff;
+        st->h[2] += (load32_le(&block[6]) >> 4) & 0x03ffffff;
+        st->h[3] += (load32_le(&block[9]) >> 6) & 0x03ffffff;
+        st->h[4] += (load32_le(&block[12]) >> 8) | ((uint32_t)block[16] << 24);
 
         // Multiply h by r
         uint64_t d[5];
@@ -145,18 +145,13 @@ static void poly1305_finish(Poly1305* st, uint8_t tag[16]) {
     h2 = (h2 & mask) | g2; h3 = (h3 & mask) | g3;
 
     // h = h % (2^128) + pad
-    uint64_t f;
-    f = (uint64_t)h0 | ((uint64_t)h1<<26) | ((uint64_t)h2<<52);
-    uint64_t lo = f + st->pad[0] + ((uint64_t)st->pad[1]<<32);
-    f = ((uint64_t)h2>>12) | ((uint64_t)h3<<14) | ((uint64_t)h4<<40);
-    uint64_t hi = f + st->pad[2] + ((uint64_t)st->pad[3]<<32) + (lo < (f + st->pad[0] + ((uint64_t)st->pad[1]<<32)) ? 0 : 0);
-
-    // Proper carry
-    uint64_t t0 = (h0 | ((uint64_t)h1<<26) | ((uint64_t)h2<<52));
-    uint64_t t1 = ((h2>>12) | ((uint64_t)h3<<14) | ((uint64_t)h4<<40));
-    t0 += st->pad[0] + ((uint64_t)st->pad[1]<<32);
-    uint64_t carry = (t0 < ((uint64_t)st->pad[0] + ((uint64_t)st->pad[1]<<32))) ? 1 : 0;
-    t1 += st->pad[2] + ((uint64_t)st->pad[3]<<32) + carry;
+    uint64_t t0 = (h0 | ((uint64_t)h1 << 26) | ((uint64_t)h2 << 52));
+    uint64_t t1 = ((h2 >> 12) | ((uint64_t)h3 << 14) | ((uint64_t)h4 << 40));
+    uint64_t pad_lo = (uint64_t)st->pad[0] | ((uint64_t)st->pad[1] << 32);
+    uint64_t pad_hi = (uint64_t)st->pad[2] | ((uint64_t)st->pad[3] << 32);
+    t0 += pad_lo;
+    uint64_t carry = (t0 < pad_lo) ? 1 : 0;
+    t1 += pad_hi + carry;
 
     store32_le(&tag[0], (uint32_t)t0);
     store32_le(&tag[4], (uint32_t)(t0>>32));
