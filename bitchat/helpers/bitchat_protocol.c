@@ -1,6 +1,7 @@
 #include "bitchat_protocol.h"
 #include <string.h>
 #include <furi.h>
+#include <furi_hal.h>
 #include <moon/settings.h>
 
 // ── Helpers ──────────────────────────────────────────────────────────
