@@ -1,0 +1,16 @@
+App(
+    appid="mfkeys_decrypt",
+    name="MFKeys Decrypt",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="mfkeys_decrypt_app",
+    targets=["f7"],
+    stack_size=8 * 1024,
+    requires=["gui"],
+    fap_category="Utilities",
+    fap_author="@KaraZajac",
+    fap_version="1.0",
+    fap_description="Decrypt encrypted SubGhz keystore files.",
+    fap_private_libs=[
+        Lib(name="subghz_keystore"),
+    ],
+)
