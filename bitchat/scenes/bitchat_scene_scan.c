@@ -12,7 +12,6 @@ static const uint8_t bc_char_uuid[] = BITCHAT_CHAR_UUID_128;
 
 typedef enum {
     ScanPhaseScanning,
-    ScanPhaseSelectPeer,
     ScanPhaseConnecting,
     ScanPhaseDiscoverServices,
     ScanPhaseDiscoverChars,
@@ -32,13 +31,6 @@ static ScanPhase scan_phase;
 static uint8_t pending_hs_pkt[128];
 static uint16_t pending_hs_pkt_len;
 
-// Dual-role tie-breaking: compare MAC addresses.
-// Lower MAC acts as central (initiates connection).
-// Returns true if we should connect as central to this peer.
-static bool should_we_be_central(const uint8_t our_mac[6], const uint8_t peer_mac[6]) {
-    return memcmp(our_mac, peer_mac, 6) < 0;
-}
-
 static bool parse_adv_name(const uint8_t* data, uint8_t len, char* name, size_t sz) {
     uint8_t pos = 0;
     while(pos < len) {
@@ -56,19 +48,29 @@ static bool parse_adv_name(const uint8_t* data, uint8_t len, char* name, size_t 
     return false;
 }
 
-// Scan callback — collect BitChat peers for selection
+/* Scan callback — AUTO-CONNECT on the first BitChat peer seen.
+ *
+ * Previous versions collected a list of peers and showed a submenu for
+ * the user to pick. That flow was unusable in practice: the Android
+ * BitChat client reconnects aggressively (~every 1.5 s), so by the time
+ * the user could tap a result the radio was saturated with inbound
+ * peripheral traffic and `gap_start_scanning` returned
+ * HCI_COMMAND_DISALLOWED (0x0C). The old working commit
+ * (Moon-Apps 14b8b2bf0) just stopped the scan on first match and
+ * connected — that pattern is restored here. */
 static void bc_scan_callback(GapScanResultData* result, void* context) {
     BitchatApp* app = context;
     if(!result->data || result->data_len == 0) return;
 
-    /* Ignore any advertisement that claims our own MAC. The STM32WB radio
-     * can occasionally observe its own adverts, and even without that, a
-     * nearby repeater could echo us back. */
+    /* Ignore any advertisement that claims our own MAC. The STM32WB
+     * radio can observe its own adverts; a nearby repeater could also
+     * echo us back. */
     if(memcmp(result->address, app->our_mac, 6) == 0) return;
 
-    // Check for BitChat service UUID in advertisement
-    uint8_t pos = 0;
+    /* Walk the AD records looking for a 128-bit service UUID list
+     * (AD types 0x06 incomplete / 0x07 complete) containing our UUID. */
     bool found_uuid = false;
+    uint8_t pos = 0;
     while(pos < result->data_len) {
         uint8_t len = result->data[pos];
         if(len == 0 || pos + len >= result->data_len) break;
@@ -86,57 +88,38 @@ static void bc_scan_callback(GapScanResultData* result, void* context) {
     }
     if(!found_uuid) return;
 
-    /* Parse advertised nickname up front so we can dedupe by identity
-     * rather than by MAC. Android and iOS rotate their BLE address
-     * (Resolvable Private Address) roughly every 15 minutes, so a single
-     * phone can appear as 2-3 distinct MACs during a 10 s scan if we
-     * only key on address. The nickname is stable across RPA rotations
-     * for the same logical peer. */
-    char adv_name[32] = {0};
-    bool have_name = parse_adv_name(result->data, result->data_len, adv_name, sizeof(adv_name));
-
+    /* First match wins — save target and stop scanning. The tick handler
+     * will pick this up and call gap_connect. */
     furi_mutex_acquire(app->mutex, FuriWaitForever);
-
-    /* Dedupe pass: prefer a nickname match over a MAC match. Update the
-     * existing entry's current MAC and RSSI so the user can still connect
-     * to the latest RPA after rotation. */
-    for(uint8_t i = 0; i < app->scan_result_count; i++) {
-        BcPeer* existing = &app->scan_results[i];
-        bool mac_match = (memcmp(existing->address, result->address, 6) == 0);
-        bool name_match = have_name && existing->nickname[0] != '\0' &&
-                          strncmp(existing->nickname, adv_name, BC_MAX_NICKNAME) == 0;
-        if(mac_match || name_match) {
-            if(!mac_match) {
-                /* Same nickname, new RPA — refresh the address. */
-                memcpy(existing->address, result->address, 6);
-                existing->address_type = result->address_type;
-            }
-            existing->rssi = result->rssi;
-            furi_mutex_release(app->mutex);
-            return;
-        }
+    if(!app->scanning) {
+        /* Already found one; ignore later advertisements. */
+        furi_mutex_release(app->mutex);
+        return;
     }
-
-    if(app->scan_result_count < BC_MAX_PEERS) {
-        BcPeer* dev = &app->scan_results[app->scan_result_count];
-        memcpy(dev->address, result->address, 6);
-        dev->address_type = result->address_type;
-        dev->rssi = result->rssi;
-        if(have_name) {
-            strncpy(dev->nickname, adv_name, BC_MAX_NICKNAME);
-        } else {
-            snprintf(dev->nickname, BC_MAX_NICKNAME, "%02X:%02X:%02X:%02X",
-                result->address[3], result->address[2],
-                result->address[1], result->address[0]);
-        }
-        app->scan_result_count++;
+    BcPeer* dev = &app->scan_results[0];
+    memcpy(dev->address, result->address, 6);
+    dev->address_type = result->address_type;
+    dev->rssi = result->rssi;
+    char adv_name[32] = {0};
+    if(parse_adv_name(result->data, result->data_len, adv_name, sizeof(adv_name))) {
+        strncpy(dev->nickname, adv_name, BC_MAX_NICKNAME);
+    } else {
+        snprintf(dev->nickname, BC_MAX_NICKNAME, "%02X:%02X:%02X:%02X",
+            result->address[3], result->address[2],
+            result->address[1], result->address[0]);
     }
+    app->scan_result_count = 1;
+    app->selected_scan_idx = 0;
 
+    gap_stop_scanning();
+    app->scanning = false;
     furi_mutex_release(app->mutex);
-}
 
-static void bc_peer_select_cb(void* ctx, uint32_t idx) {
-    view_dispatcher_send_custom_event(((BitchatApp*)ctx)->view_dispatcher, 1000 + idx);
+    FURI_LOG_I(TAG, "Peer found: %s (%02X:%02X:%02X:%02X:%02X:%02X rssi=%d)",
+        dev->nickname,
+        dev->address[5], dev->address[4], dev->address[3],
+        dev->address[2], dev->address[1], dev->address[0],
+        dev->rssi);
 }
 
 void bitchat_scene_scan_on_enter(void* context) {
@@ -152,6 +135,19 @@ void bitchat_scene_scan_on_enter(void* context) {
     popup_set_header(app->popup, "BitChat", 64, 10, AlignCenter, AlignTop);
     popup_set_text(app->popup, "Scanning for\nBitChat peers...", 64, 36, AlignCenter, AlignCenter);
     view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewPopup);
+
+    /* If a peer had connected to us as peripheral just before the user
+     * entered scan mode, the radio is busy and gap_start_scanning would
+     * return HCI_COMMAND_DISALLOWED (0x0C). Drop any existing link and
+     * wait briefly for teardown — restored from the old working commit. */
+    if(gap_get_state() == GapStateConnected) {
+        uint16_t h = gap_get_connection_handle();
+        if(h) gap_disconnect(h);
+        for(int i = 0; i < 20; i++) {
+            furi_delay_ms(50);
+            if(gap_get_state() != GapStateConnected) break;
+        }
+    }
 
     ble_gatt_client_init();
     /* Per-connection callback registered once we know the handle (ScanPhaseConnecting). */
@@ -179,51 +175,27 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
 
     switch(scan_phase) {
     case ScanPhaseScanning:
-        if(app->scanning && gap_get_state() != GapStateScanning) {
-            app->scanning = false;
-        }
-        if(!app->scanning || app->tick_count >= CONNECT_TIMEOUT_POLLS) {
-            if(app->scanning) {
-                gap_stop_scanning();
-                gap_set_scan_callback(NULL, NULL);
-                app->scanning = false;
-            }
-
-            if(app->scan_result_count == 0) {
-                popup_set_text(app->popup, "No BitChat peers\nfound nearby", 64, 36, AlignCenter, AlignCenter);
+        /* scan callback sets app->scanning = false the moment it finds a peer.
+         * Otherwise we wait for the scan timeout. */
+        if(!app->scanning) {
+            /* Peer found — scan callback already saved target in scan_results[0]. */
+            gap_set_scan_callback(NULL, NULL);
+            BcPeer* dev = &app->scan_results[0];
+            scan_phase = ScanPhaseConnecting;
+            app->tick_count = 0;
+            popup_set_text(app->popup, "Peer found!\nConnecting...", 64, 36, AlignCenter, AlignCenter);
+            if(!gap_connect(dev->address_type, dev->address)) {
+                FURI_LOG_E(TAG, "gap_connect returned false");
+                popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
                 scan_phase = ScanPhaseDone;
-            } else if(app->scan_result_count == 1) {
-                // Single peer — check tie-breaking before connecting
-                BcPeer* dev = &app->scan_results[0];
-                if(should_we_be_central(app->our_mac, dev->address)) {
-                    app->selected_scan_idx = 0;
-                    scan_phase = ScanPhaseConnecting;
-                    app->tick_count = 0;
-                    popup_set_text(app->popup, "Connecting...", 64, 36, AlignCenter, AlignCenter);
-                    if(!gap_connect(dev->address_type, dev->address)) {
-                        popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
-                        scan_phase = ScanPhaseDone;
-                    }
-                } else {
-                    // Higher MAC — wait for peer to connect to us
-                    popup_set_text(app->popup, "Peer found!\nWaiting for them\nto connect to us...", 64, 36, AlignCenter, AlignCenter);
-                    scan_phase = ScanPhaseDone;
-                    // The peer's scan will find our advertisement and connect as central
-                }
-            } else {
-                // Multiple peers — show selection submenu
-                scan_phase = ScanPhaseSelectPeer;
-                submenu_reset(app->submenu);
-                submenu_set_header(app->submenu, "Select Peer");
-                static char labels[BC_MAX_PEERS][40];
-                for(uint8_t i = 0; i < app->scan_result_count; i++) {
-                    snprintf(labels[i], sizeof(labels[i]), "%s (%ddBm)",
-                        app->scan_results[i].nickname, app->scan_results[i].rssi);
-                    submenu_add_item(app->submenu, labels[i], 1000 + i, bc_peer_select_cb, app);
-                }
-                view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewSubmenu);
-                furi_timer_stop(app->timer);
             }
+        } else if(app->tick_count >= CONNECT_TIMEOUT_POLLS) {
+            /* Scan timed out without finding any BitChat advertisement. */
+            gap_stop_scanning();
+            gap_set_scan_callback(NULL, NULL);
+            app->scanning = false;
+            popup_set_text(app->popup, "No BitChat peers\nfound nearby", 64, 36, AlignCenter, AlignCenter);
+            scan_phase = ScanPhaseDone;
         }
         return true;
 
@@ -356,33 +328,6 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
 
 check_gatt:
     if(event.type != SceneManagerEventTypeCustom) return false;
-
-    // Handle peer selection from submenu
-    if(event.event >= 1000 && event.event < (uint32_t)(1000 + app->scan_result_count)) {
-        app->selected_scan_idx = event.event - 1000;
-        BcPeer* dev = &app->scan_results[app->selected_scan_idx];
-        FURI_LOG_I(TAG,
-            "Peer selected idx=%u name=%s addr=%02X:%02X:%02X:%02X:%02X:%02X type=%u",
-            app->selected_scan_idx, dev->nickname,
-            dev->address[5], dev->address[4], dev->address[3],
-            dev->address[2], dev->address[1], dev->address[0],
-            dev->address_type);
-
-        scan_phase = ScanPhaseConnecting;
-        app->tick_count = 0;
-        popup_reset(app->popup);
-        popup_set_header(app->popup, "BitChat", 64, 10, AlignCenter, AlignTop);
-        popup_set_text(app->popup, "Connecting...", 64, 36, AlignCenter, AlignCenter);
-        view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewPopup);
-
-        if(!gap_connect(dev->address_type, dev->address)) {
-            FURI_LOG_E(TAG, "gap_connect returned false");
-            popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
-            scan_phase = ScanPhaseDone;
-        }
-        furi_timer_start(app->timer, 100);
-        return true;
-    }
 
     switch(scan_phase) {
     case ScanPhaseDiscoverServices:

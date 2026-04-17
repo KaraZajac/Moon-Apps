@@ -43,19 +43,7 @@ static FuriHalBleProfileBase* bitchat_profile_start(FuriHalBleProfileParams para
     profile->base.config = ble_profile_bitchat;
     profile->svc = ble_svc_bitchat_start();
     furi_check(profile->svc);
-
-    /* BitChat's upstream iOS/Android clients expect an *unpaired, unbonded*
-     * link — security is done at the application layer via Noise_XX over
-     * our custom characteristic. gap_init already configured the auth
-     * settings from this profile's GapPairingNone, but that still advertises
-     * "just-works" pairing capability (IO_CAP_DISPLAY_YES_NO), which some
-     * Android BitChat clients try to take advantage of and then get stuck
-     * after the pair completes without ever subscribing to our CCCD.
-     * gap_set_no_pairing() broadcasts NoInputNoOutput + LESC unsupported +
-     * no bonding + fixed-pin forbidden, so peers skip pairing entirely. */
-    gap_set_no_pairing();
-
-    FURI_LOG_I(TAG, "Profile started (unpaired/unbonded GAP auth)");
+    FURI_LOG_I(TAG, "Profile started");
     return &profile->base;
 }
 
