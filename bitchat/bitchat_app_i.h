@@ -137,3 +137,11 @@ typedef struct BitchatApp {
 
 // Add a message to the chat log
 void bitchat_add_chat_message(BitchatApp* app, const char* sender, const char* content);
+
+/* Process a BitChat packet sitting in app->rx_buf (size app->rx_len).
+ * Handles fragment reassembly, dedup, relay forwarding, Ed25519
+ * signature verification, Noise handshake, plain / encrypted messages,
+ * LEAVE events, and peer-table updates. Scene-agnostic — call from
+ * any BLE notification / service RX path so a peer's announce gets
+ * captured regardless of which scene is currently on screen. */
+void bitchat_process_incoming_packet(BitchatApp* app);

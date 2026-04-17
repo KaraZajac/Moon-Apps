@@ -28,7 +28,7 @@ static void send_announce_via_service(BitchatApp* app) {
     }
 }
 
-static void process_incoming_packet(BitchatApp* app) {
+void bitchat_process_incoming_packet(BitchatApp* app) {
     // Ignore empty notifications (keepalive/subscription confirmations)
     if(app->rx_len == 0) return;
 
@@ -452,7 +452,9 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             // Don't rebuild on tick — only on new content
             return true;
         } else if(event.event == BitchatCustomEventNotification) {
-            process_incoming_packet(app);
+            /* bitchat_process_incoming_packet already ran at the app
+             * level (bitchat_custom_event_callback). Just refresh the
+             * visible chat log. */
             rebuild_chat_widget(app);
             return true;
         } else if(event.event == BitchatCustomEventMsgSend) {

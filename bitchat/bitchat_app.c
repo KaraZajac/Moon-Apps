@@ -2,7 +2,17 @@
 #include "crypto/ed25519_donna/ed25519.h"
 
 static bool bitchat_custom_event_callback(void* ctx, uint32_t event) {
-    return scene_manager_handle_custom_event(((BitchatApp*)ctx)->scene_manager, event);
+    BitchatApp* app = (BitchatApp*)ctx;
+    /* Process packet at app level so a peer's ANNOUNCE (which contains
+     * their nickname + signing key) is captured even when we're still
+     * in the scan scene finishing the connect / subscribe / Noise
+     * handshake dance. Previously, only the chat scene handled this
+     * event, so early announces were silently dropped and the first
+     * message arrived as "Message from unknown". */
+    if(event == BitchatCustomEventNotification) {
+        bitchat_process_incoming_packet(app);
+    }
+    return scene_manager_handle_custom_event(app->scene_manager, event);
 }
 
 static bool bitchat_back_event_callback(void* ctx) {
