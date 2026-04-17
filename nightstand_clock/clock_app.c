@@ -7,7 +7,7 @@
 #include <notification/notification.h>
 #include <notification/notification_messages.h>
 #include <notification/notification_app.h>
-#include <momentum/settings.h>
+#include <moon/settings.h>
 
 #include "clock_app.h"
 
@@ -160,7 +160,7 @@ static void clock_render_callback(Canvas* const canvas, void* ctx) {
                 hour -= 12;
             }
             if(hour == 0) {
-                hour = momentum_settings.midnight_format_00 ? 0 : 12;
+                hour = moon_settings.midnight_format_00 ? 0 : 12;
             }
         }
 

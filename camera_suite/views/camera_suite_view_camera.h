@@ -33,8 +33,8 @@
  * @see https://github.com/Next-Flip/Momentum-Firmware
  * @see https://github.com/Next-Flip/Momentum-Apps
 */
-#include <momentum/momentum.h>
-#define UART_CH (momentum_settings.uart_esp_channel)
+#include <moon/moon.h>
+#define UART_CH (moon_settings.uart_esp_channel)
 #elif defined FW_ORIGIN_RM
 /**
  * Enable the following line for "RogueMaster Firmware".

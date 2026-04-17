@@ -4,6 +4,6 @@
 
 // Check if we're building for Momentum firmware
 #if defined(FW_ORIGIN_Moon)
-#include <momentum/momentum.h>
+#include <moon/moon.h>
 #define HAS_MOMENTUM_SUPPORT 1
 #endif

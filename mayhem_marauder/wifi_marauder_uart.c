@@ -1,9 +1,9 @@
 #include "wifi_marauder_app_i.h"
 #include "wifi_marauder_uart.h"
 
-#include <momentum/momentum.h>
+#include <moon/moon.h>
 
-#define UART_CH  (momentum_settings.uart_esp_channel)
+#define UART_CH  (moon_settings.uart_esp_channel)
 #define BAUDRATE (230400)
 
 struct WifiMarauderUart {

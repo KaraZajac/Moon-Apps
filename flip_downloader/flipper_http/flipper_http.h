@@ -13,7 +13,7 @@
 #include <furi_hal_gpio.h>
 #include <furi_hal_serial.h>
 #include <storage/storage.h>
-#include <momentum/settings.h>
+#include <moon/settings.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -22,7 +22,7 @@ extern "C"
 
 #define HTTP_TAG "FlipperHTTP"            // change this to your app name
 #define http_tag "flip_downloader"        // change this to your app id
-#define UART_CH (momentum_settings.uart_esp_channel)    // UART channel
+#define UART_CH (moon_settings.uart_esp_channel)    // UART channel
 #define TIMEOUT_DURATION_TICKS (5 * 1000) // 5 seconds
 #define BAUDRATE (115200)                 // UART baudrate
 #define RX_BUF_SIZE 2048                  // UART RX buffer size
