@@ -264,7 +264,7 @@ int32_t bt_explorer_app(void* p) {
     gui_add_view_port(app->gui, app->view_port, GuiLayerFullscreen);
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(gatt_cb, app);
+    /* Per-connection callback is registered once we know the handle */
 
     InputEvent event;
     bool running = true;
@@ -359,6 +359,7 @@ int32_t bt_explorer_app(void* p) {
                 app->connecting = false;
                 app->connected = true;
                 app->connection_handle = gap_get_connection_handle();
+                ble_gatt_client_set_callback(app->connection_handle, gatt_cb, app);
                 // Start service discovery
                 ble_gatt_client_discover_services(app->connection_handle);
             } else if(state == GapStateIdle) {
@@ -370,10 +371,10 @@ int32_t bt_explorer_app(void* p) {
     }
 
     if(app->connected) {
+        ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
         furi_hal_bt_disconnect(app->connection_handle);
     }
     furi_hal_bt_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
     furi_record_close(RECORD_GUI);

@@ -426,7 +426,7 @@ static void start_vuln_test(WhisperPairApp* app) {
     snprintf(app->test_status, sizeof(app->test_status), "Connecting...");
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(gatt_cb, app);
+    /* Per-connection callback registered when the connection handle arrives */
     furi_hal_bt_connect(d->address_type, d->address);
 }
 
@@ -505,6 +505,7 @@ int32_t whisper_pair_app(void* p) {
         // Check connection for vuln test
         if(app->testing && gap_get_state() == GapStateConnected && app->connection_handle == 0) {
             app->connection_handle = gap_get_connection_handle();
+            ble_gatt_client_set_callback(app->connection_handle, gatt_cb, app);
             if(app->connection_handle != 0xFFFF) {
                 furi_mutex_acquire(app->mutex, FuriWaitForever);
                 snprintf(app->test_status, sizeof(app->test_status), "Connected, discovering...");
@@ -517,7 +518,9 @@ int32_t whisper_pair_app(void* p) {
     }
 
     furi_hal_bt_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    if(app->connection_handle) {
+        ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
+    }
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
     furi_record_close(RECORD_GUI);

@@ -59,6 +59,7 @@ bool ble_connect_scene_connecting_on_event(void* context, SceneManagerEvent even
                 app->connection_handle = gap_get_connection_handle();
                 FURI_LOG_I(TAG, "Connected, handle=%d", app->connection_handle);
 
+                ble_connect_register_gatt_callback(app);
                 // Discover GATT services
                 ble_gatt_client_discover_services(app->connection_handle);
                 scene_manager_next_scene(app->scene_manager, BleConnectSceneServices);

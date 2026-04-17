@@ -151,6 +151,10 @@ typedef struct MeshtasticApp {
 MeshtasticApp* meshtastic_app_alloc(void);
 void meshtastic_app_free(MeshtasticApp* app);
 
+/** Register the GATT client callback for this app's active connection.
+ *  Call after app->connection_handle has been populated. */
+void meshtastic_register_gatt_callback(MeshtasticApp* app);
+
 /** Process a FromRadio protobuf message */
 void meshtastic_process_from_radio(MeshtasticApp* app, const uint8_t* data, uint16_t len);
 

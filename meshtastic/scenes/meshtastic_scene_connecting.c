@@ -81,6 +81,7 @@ bool meshtastic_scene_connecting_on_event(void* context, SceneManagerEvent event
             if(connect_phase == ConnPhaseWaitConnect && state == GapStateConnected) {
                 // Just connected — wait 500ms, then send pairing request
                 app->connection_handle = gap_get_connection_handle();
+                meshtastic_register_gatt_callback(app);
                 FURI_LOG_I(TAG, "Connected (handle=%d)", app->connection_handle);
                 popup_set_text(app->popup, "Pairing...", 64, 36, AlignCenter, AlignCenter);
                 connect_phase = ConnPhasePairing;

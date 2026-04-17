@@ -106,3 +106,7 @@ typedef struct BleConnectApp {
 
 BleConnectApp* ble_connect_app_alloc(void);
 void ble_connect_app_free(BleConnectApp* app);
+
+/** Register the GATT client callback for this app's active connection.
+ *  Call after app->connection_handle has been populated. */
+void ble_connect_register_gatt_callback(BleConnectApp* app);

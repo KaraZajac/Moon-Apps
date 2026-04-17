@@ -191,11 +191,14 @@ BleConnectApp* ble_connect_app_alloc(void) {
     app->connect_timer = furi_timer_alloc(
         ble_connect_connect_timeout_callback, FuriTimerTypePeriodic, app);
 
-    // Init GATT client
+    // Init GATT client; per-connection callback registered once we connect
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(ble_connect_gatt_callback, app);
 
     return app;
+}
+
+void ble_connect_register_gatt_callback(BleConnectApp* app) {
+    ble_gatt_client_set_callback(app->connection_handle, ble_connect_gatt_callback, app);
 }
 
 void ble_connect_app_free(BleConnectApp* app) {
@@ -203,7 +206,9 @@ void ble_connect_app_free(BleConnectApp* app) {
 
     // Clean up BLE state — always clear callbacks and stop any active operations
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    if(app->connection_handle) {
+        ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
+    }
 
     if(app->scanning) {
         gap_stop_scanning();
