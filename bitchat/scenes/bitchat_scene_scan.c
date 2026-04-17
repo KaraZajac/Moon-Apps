@@ -17,11 +17,20 @@ typedef enum {
     ScanPhaseDiscoverServices,
     ScanPhaseDiscoverChars,
     ScanPhaseSubscribe,
-    ScanPhaseAnnounceDelay,
+    ScanPhaseAnnounceDelay,   /* tick-driven: wait 2 ticks, send announce */
+    ScanPhaseWaitAnnounceAck, /* event-driven: on WriteComplete, send msg1 */
+    ScanPhaseWaitMsg1Ack,     /* event-driven: on WriteComplete, goto chat */
     ScanPhaseDone,
 } ScanPhase;
 
 static ScanPhase scan_phase;
+
+/* Noise handshake msg1 is built at announce-send time and held here until
+ * the announce write's ACK arrives, so we never have two ATT writes in
+ * flight on the same link (ATT permits only one outstanding request; the
+ * second returns HCI_COMMAND_DISALLOWED = 0x0C). */
+static uint8_t pending_hs_pkt[128];
+static uint16_t pending_hs_pkt_len;
 
 // Dual-role tie-breaking: compare MAC addresses.
 // Lower MAC acts as central (initiates connection).
@@ -194,13 +203,17 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
         }
         return true;
 
-    case ScanPhaseConnecting:
-        if(gap_get_state() == GapStateConnected) {
+    case ScanPhaseConnecting: {
+        /* Dual-role hazard: if a peer is already connected to us as peripheral,
+         * gap_get_state() returns Connected the moment we enter this phase,
+         * *before* our outbound central connect completes. The legacy
+         * gap_get_connection_handle() fallback would then return the peer's
+         * handle — and we'd run discovery/writes against the wrong link.
+         * Require an actual central-role slot specifically. */
+        uint16_t central_handle = gap_get_connection_handle_by_role(true);
+        if(central_handle != 0) {
             app->connected = true;
-            app->connection_handle = gap_get_connection_handle_by_role(true);
-            if(app->connection_handle == 0) {
-                app->connection_handle = gap_get_connection_handle();
-            }
+            app->connection_handle = central_handle;
             extern void bitchat_gatt_callback(BleGattClientEvent* event, void* context);
             ble_gatt_client_set_callback(app->connection_handle, bitchat_gatt_callback, app);
             scan_phase = ScanPhaseDiscoverServices;
@@ -211,6 +224,7 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
             popup_set_text(app->popup, "Connection\ntimeout", 64, 36, AlignCenter, AlignCenter);
             scan_phase = ScanPhaseDone;
         }
+    }
         return true;
 
     case ScanPhaseDiscoverServices:
@@ -220,90 +234,96 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
         }
         break;
 
-    case ScanPhaseAnnounceDelay:
-        if(app->tick_count >= 2) {
-            // Store per-peer central connection info in the peer table
-            if(app->selected_scan_idx < app->scan_result_count) {
-                BcPeer* scan_dev = &app->scan_results[app->selected_scan_idx];
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                // Find or create peer entry
-                int8_t peer_idx = -1;
-                for(uint8_t i = 0; i < app->peer_count; i++) {
-                    if(memcmp(app->peers[i].address, scan_dev->address, 6) == 0) {
-                        peer_idx = i;
-                        break;
-                    }
-                }
-                if(peer_idx < 0 && app->peer_count < BC_MAX_PEERS) {
-                    peer_idx = app->peer_count++;
-                    memcpy(app->peers[peer_idx].address, scan_dev->address, 6);
-                    strncpy(app->peers[peer_idx].nickname, scan_dev->nickname, BC_MAX_NICKNAME);
-                }
-                if(peer_idx >= 0) {
-                    app->peers[peer_idx].central_handle = app->connection_handle;
-                    app->peers[peer_idx].central_char = app->bc_char_handle;
-                    app->peers[peer_idx].central_active = true;
-                    app->peers[peer_idx].connected = true;
-                    app->peers[peer_idx].last_seen = furi_get_tick();
-                }
-                furi_mutex_release(app->mutex);
-            }
+    case ScanPhaseAnnounceDelay: {
+        if(app->tick_count < 2) return true;
 
-            BcAnnounce announce = {0};
-            strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
-            memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
-            announce.has_noise_key = true;
-            memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
-            announce.has_ed25519_key = true;
-
-            uint8_t pkt[BC_PAD_BLOCK_256];
-            uint16_t pkt_len = bc_build_signed_announce_packet(
-                pkt, sizeof(pkt), app->identity.peer_id, &announce,
-                bc_sign_wrapper, &app->identity);
-            if(pkt_len > 0) {
-                FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
-                ble_gatt_client_write(app->connection_handle, app->bc_char_handle, pkt, pkt_len);
-                if(app->svc) {
-                    ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+        /* Step 1: claim / update peer slot — brief mutex section only. */
+        int8_t peer_idx = -1;
+        if(app->selected_scan_idx < app->scan_result_count) {
+            BcPeer* scan_dev = &app->scan_results[app->selected_scan_idx];
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            for(uint8_t i = 0; i < app->peer_count; i++) {
+                if(memcmp(app->peers[i].address, scan_dev->address, 6) == 0) {
+                    peer_idx = i;
+                    break;
                 }
             }
-
-            // Initiate Noise handshake with this peer (we're the initiator)
-            if(app->selected_scan_idx < app->scan_result_count) {
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                // Find the peer entry we just created
-                for(uint8_t pi = 0; pi < app->peer_count; pi++) {
-                    if(app->peers[pi].central_active &&
-                       app->peers[pi].central_handle == app->connection_handle) {
-                        BcPeer* peer = &app->peers[pi];
-                        noise_handshake_init(&peer->noise_hs, NoiseRoleInitiator,
-                            app->identity.noise_secret, app->identity.noise_public);
-                        peer->noise_hs_active = true;
-
-                        // Write handshake message 1: -> e
-                        uint8_t hs_out[64];
-                        uint16_t hs_len = noise_handshake_write(
-                            &peer->noise_hs, hs_out, sizeof(hs_out));
-                        if(hs_len > 0) {
-                            uint8_t hs_pkt[128];
-                            uint16_t hs_hdr = bc_encode_header(
-                                hs_pkt, sizeof(hs_pkt), BC_TYPE_NOISE_HS, BC_DEFAULT_TTL,
-                                0, app->identity.peer_id, hs_out, hs_len);
-                            memcpy(&hs_pkt[hs_hdr], hs_out, hs_len);
-                            uint16_t hs_total = hs_hdr + hs_len;
-                            furi_delay_ms(100);
-                            ble_gatt_client_write(
-                                app->connection_handle, app->bc_char_handle,
-                                hs_pkt, hs_total);
-                            FURI_LOG_I(TAG, "Sent Noise handshake msg1 (%d bytes)", hs_total);
-                        }
-                        break;
-                    }
-                }
-                furi_mutex_release(app->mutex);
+            if(peer_idx < 0 && app->peer_count < BC_MAX_PEERS) {
+                peer_idx = app->peer_count++;
+                memcpy(app->peers[peer_idx].address, scan_dev->address, 6);
+                strncpy(app->peers[peer_idx].nickname, scan_dev->nickname, BC_MAX_NICKNAME);
             }
-            scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+            if(peer_idx >= 0) {
+                app->peers[peer_idx].central_handle = app->connection_handle;
+                app->peers[peer_idx].central_char = app->bc_char_handle;
+                app->peers[peer_idx].central_active = true;
+                app->peers[peer_idx].connected = true;
+                app->peers[peer_idx].last_seen = furi_get_tick();
+            }
+            furi_mutex_release(app->mutex);
         }
+
+        /* Step 2: build announce + pre-build handshake msg1 OUTSIDE the mutex.
+         * Crypto (Ed25519 signing, Noise X25519) takes milliseconds and used
+         * to run with app->mutex held, which blocked bitchat_gatt_callback
+         * on the BLE event thread if a notification arrived mid-handshake.
+         * Identity + scene-local peer ownership means this is safe without
+         * the mutex. */
+        BcAnnounce announce = {0};
+        strncpy(announce.nickname, app->nickname, BC_MAX_NICKNAME);
+        memcpy(announce.noise_pubkey, app->identity.noise_public, 32);
+        announce.has_noise_key = true;
+        memcpy(announce.ed25519_pubkey, app->identity.ed25519_public, 32);
+        announce.has_ed25519_key = true;
+
+        uint8_t pkt[BC_PAD_BLOCK_256];
+        uint16_t pkt_len = bc_build_signed_announce_packet(
+            pkt, sizeof(pkt), app->identity.peer_id, &announce,
+            bc_sign_wrapper, &app->identity);
+
+        pending_hs_pkt_len = 0;
+        if(peer_idx >= 0) {
+            BcPeer* peer = &app->peers[peer_idx];
+            noise_handshake_init(&peer->noise_hs, NoiseRoleInitiator,
+                app->identity.noise_secret, app->identity.noise_public);
+            peer->noise_hs_active = true;
+
+            uint8_t hs_out[64];
+            uint16_t hs_len = noise_handshake_write(
+                &peer->noise_hs, hs_out, sizeof(hs_out));
+            if(hs_len > 0) {
+                uint16_t hs_hdr = bc_encode_header(
+                    pending_hs_pkt, sizeof(pending_hs_pkt), BC_TYPE_NOISE_HS,
+                    BC_DEFAULT_TTL, 0, app->identity.peer_id, hs_out, hs_len);
+                memcpy(&pending_hs_pkt[hs_hdr], hs_out, hs_len);
+                pending_hs_pkt_len = hs_hdr + hs_len;
+            }
+        }
+
+        /* Step 3: fire announce write. Wait for the ACK before queuing msg1
+         * — ATT permits only one outstanding write request per link. */
+        if(pkt_len > 0) {
+            FURI_LOG_I(TAG, "Sending signed announce (%d bytes)", pkt_len);
+            if(app->svc) {
+                ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+            }
+            bool ok = ble_gatt_client_write(
+                app->connection_handle, app->bc_char_handle, pkt, pkt_len);
+            if(ok) {
+                scan_phase = ScanPhaseWaitAnnounceAck;
+            } else {
+                /* Submit failed — can't recover, skip ahead. */
+                scan_phase = ScanPhaseDone;
+                scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+            }
+        } else {
+            /* No announce to send — skip directly to handshake. */
+            scan_phase = ScanPhaseWaitAnnounceAck;
+            /* Synthesize WriteComplete so the next phase fires on the next event. */
+            view_dispatcher_send_custom_event(
+                app->view_dispatcher, BitchatCustomEventWriteComplete);
+        }
+    }
         return true;
 
     default:
@@ -393,6 +413,38 @@ check_gatt:
             scan_phase = ScanPhaseAnnounceDelay;
             app->tick_count = 0;
             popup_set_text(app->popup, "Preparing\nannounce...", 64, 36, AlignCenter, AlignCenter);
+            return true;
+        }
+        break;
+
+    case ScanPhaseWaitAnnounceAck:
+        if(event.event == BitchatCustomEventWriteComplete ||
+           event.event == BitchatCustomEventGattError) {
+            /* Announce acked (or errored — either way the ATT slot is now
+             * free). Fire the pre-built Noise handshake msg1. */
+            if(pending_hs_pkt_len > 0) {
+                FURI_LOG_I(TAG, "Sending Noise handshake msg1 (%d bytes)",
+                    pending_hs_pkt_len);
+                bool ok = ble_gatt_client_write(
+                    app->connection_handle, app->bc_char_handle,
+                    pending_hs_pkt, pending_hs_pkt_len);
+                if(ok) {
+                    scan_phase = ScanPhaseWaitMsg1Ack;
+                } else {
+                    scan_phase = ScanPhaseDone;
+                    scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+                }
+            } else {
+                scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
+            }
+            return true;
+        }
+        break;
+
+    case ScanPhaseWaitMsg1Ack:
+        if(event.event == BitchatCustomEventWriteComplete ||
+           event.event == BitchatCustomEventGattError) {
+            scene_manager_next_scene(app->scene_manager, BitchatSceneChat);
             return true;
         }
         break;
