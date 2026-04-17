@@ -342,7 +342,7 @@ TrackerDetectorApp* tracker_detector_app_alloc(void) {
 
     // GATT client
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(tracker_detector_gatt_callback, app);
+    ble_gatt_client_set_callback(0, tracker_detector_gatt_callback, app);
 
     return app;
 }
@@ -351,7 +351,7 @@ void tracker_detector_app_free(TrackerDetectorApp* app) {
     furi_assert(app);
 
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
 
     if(app->scanning) {
         gap_stop_scanning();

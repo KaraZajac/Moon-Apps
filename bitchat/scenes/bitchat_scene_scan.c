@@ -120,9 +120,8 @@ void bitchat_scene_scan_on_enter(void* context) {
     popup_set_text(app->popup, "Scanning for\nBitChat peers...", 64, 36, AlignCenter, AlignCenter);
     view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewPopup);
 
-    extern void bitchat_gatt_callback(BleGattClientEvent* event, void* context);
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(bitchat_gatt_callback, app);
+    /* Per-connection callback registered once we know the handle (ScanPhaseConnecting). */
 
     gap_set_scan_callback(bc_scan_callback, app);
     GapScanParams params = {
@@ -202,6 +201,8 @@ bool bitchat_scene_scan_on_event(void* context, SceneManagerEvent event) {
             if(app->connection_handle == 0) {
                 app->connection_handle = gap_get_connection_handle();
             }
+            extern void bitchat_gatt_callback(BleGattClientEvent* event, void* context);
+            ble_gatt_client_set_callback(app->connection_handle, bitchat_gatt_callback, app);
             scan_phase = ScanPhaseDiscoverServices;
             popup_set_text(app->popup, "Connected!\nWaiting for MTU...", 64, 36, AlignCenter, AlignCenter);
             ble_gatt_client_exchange_mtu(app->connection_handle);

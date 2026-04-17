@@ -27,6 +27,8 @@ bool ble_connect_scene_pairing_pin_on_event(void* context, SceneManagerEvent eve
             // Pairing succeeded — continue to connected state
             app->connected = true;
             app->connection_handle = gap_get_connection_handle();
+            ble_gatt_client_set_callback(
+                app->connection_handle, ble_connect_gatt_callback, app);
             ble_gatt_client_discover_services(app->connection_handle);
             scene_manager_next_scene(app->scene_manager, BleConnectSceneServices);
             consumed = true;
@@ -41,6 +43,8 @@ bool ble_connect_scene_pairing_pin_on_event(void* context, SceneManagerEvent eve
         if(state == GapStateConnected && !app->connected) {
             app->connected = true;
             app->connection_handle = gap_get_connection_handle();
+            ble_gatt_client_set_callback(
+                app->connection_handle, ble_connect_gatt_callback, app);
             ble_gatt_client_discover_services(app->connection_handle);
             scene_manager_next_scene(app->scene_manager, BleConnectSceneServices);
             consumed = true;

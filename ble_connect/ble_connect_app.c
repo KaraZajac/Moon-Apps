@@ -49,7 +49,7 @@ void ble_connect_scan_callback_fn(GapScanResultData* result, void* context) {
     furi_mutex_release(app->scan_mutex);
 }
 
-static void ble_connect_gatt_callback(BleGattClientEvent* event, void* context) {
+void ble_connect_gatt_callback(BleGattClientEvent* event, void* context) {
     BleConnectApp* app = context;
 
     switch(event->type) {
@@ -191,9 +191,9 @@ BleConnectApp* ble_connect_app_alloc(void) {
     app->connect_timer = furi_timer_alloc(
         ble_connect_connect_timeout_callback, FuriTimerTypePeriodic, app);
 
-    // Init GATT client
+    // Init GATT client; per-connection callback is registered in
+    // the connecting scene once app->connection_handle is populated.
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(ble_connect_gatt_callback, app);
 
     return app;
 }
@@ -203,7 +203,9 @@ void ble_connect_app_free(BleConnectApp* app) {
 
     // Clean up BLE state — always clear callbacks and stop any active operations
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    if(app->connection_handle) {
+        ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
+    }
 
     if(app->scanning) {
         gap_stop_scanning();

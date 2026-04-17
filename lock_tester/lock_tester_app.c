@@ -177,7 +177,7 @@ LockTesterApp* lock_tester_app_alloc(void) {
     app->timer = furi_timer_alloc(lock_tester_timer_callback, FuriTimerTypePeriodic, app);
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(lock_tester_gatt_callback, app);
+    ble_gatt_client_set_callback(0, lock_tester_gatt_callback, app);
 
     return app;
 }
@@ -186,7 +186,7 @@ void lock_tester_app_free(LockTesterApp* app) {
     furi_assert(app);
 
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
 
     if(app->scanning) {
         gap_stop_scanning();

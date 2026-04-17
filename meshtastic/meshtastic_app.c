@@ -409,7 +409,7 @@ MeshtasticApp* meshtastic_app_alloc(void) {
 
     // Init GATT client
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(meshtastic_gatt_callback, app);
+    ble_gatt_client_set_callback(0, meshtastic_gatt_callback, app);
 
     return app;
 }
@@ -420,7 +420,7 @@ void meshtastic_app_free(MeshtasticApp* app) {
     // BLE cleanup — restore default pairing config for phone companion
     gap_set_pairing_method(0);
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
     if(app->state == MeshStateScanning) {
         gap_stop_scanning();
     }

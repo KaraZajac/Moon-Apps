@@ -258,7 +258,7 @@ WhisperPairApp* whisper_pair_app_alloc(void) {
     app->timer = furi_timer_alloc(wp_timer_callback, FuriTimerTypePeriodic, app);
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(wp_gatt_callback, app);
+    ble_gatt_client_set_callback(0, wp_gatt_callback, app);
 
     return app;
 }
@@ -267,7 +267,7 @@ void whisper_pair_app_free(WhisperPairApp* app) {
     furi_assert(app);
 
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
     if(app->scanning) { gap_stop_scanning(); app->scanning = false; }
     if(app->connected) { gap_disconnect(app->connection_handle); app->connected = false; }
 

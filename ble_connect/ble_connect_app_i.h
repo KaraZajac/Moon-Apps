@@ -106,3 +106,7 @@ typedef struct BleConnectApp {
 
 BleConnectApp* ble_connect_app_alloc(void);
 void ble_connect_app_free(BleConnectApp* app);
+
+/** GATT client event handler — registered on the app's connection handle
+ *  once app->connection_handle is populated. */
+void ble_connect_gatt_callback(BleGattClientEvent* event, void* context);

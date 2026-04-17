@@ -121,13 +121,13 @@ CorosAuditorApp* coros_app_alloc(void) {
     app->timer = furi_timer_alloc(coros_timer_cb, FuriTimerTypePeriodic, app);
     app->audit_log = furi_string_alloc();
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(coros_gatt_callback, app);
+    ble_gatt_client_set_callback(0, coros_gatt_callback, app);
     return app;
 }
 
 void coros_app_free(CorosAuditorApp* app) {
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
     if(app->scanning) gap_stop_scanning();
     if(app->connected) gap_disconnect(app->connection_handle);
     furi_timer_free(app->timer);

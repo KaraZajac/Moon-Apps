@@ -147,14 +147,14 @@ EcovacsAuditorApp* ecovacs_app_alloc(void) {
     app->audit_log = furi_string_alloc();
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(ecovacs_gatt_callback, app);
+    ble_gatt_client_set_callback(0, ecovacs_gatt_callback, app);
 
     return app;
 }
 
 void ecovacs_app_free(EcovacsAuditorApp* app) {
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
 
     if(app->scanning) gap_stop_scanning();
     if(app->connected) gap_disconnect(app->connection_handle);

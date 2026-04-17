@@ -191,7 +191,11 @@ FtApp* ft_app_alloc(void) {
     app->tx_file = storage_file_alloc(app->storage);
 
     ble_l2cap_coc_init();
-    ble_l2cap_coc_set_callback(ft_coc_callback, app);
+    /* handle=0 = default callback: fires for any CoC event whose specific
+     * handle isn't separately registered — needed for the peripheral
+     * (receive) path where the connection handle isn't known until the
+     * incoming CoC request arrives. */
+    ble_l2cap_coc_set_callback(0, ft_coc_callback, app);
 
     // Start advertising immediately — always ready to receive
     ft_start_advertising(app);
@@ -204,7 +208,7 @@ void ft_app_free(FtApp* app) {
     gap_ext_adv_remove(FT_ADV_HANDLE);
 
     gap_set_scan_callback(NULL, NULL);
-    ble_l2cap_coc_set_callback(NULL, NULL);
+    ble_l2cap_coc_set_callback(0, NULL, NULL);
     ble_l2cap_coc_deinit();
 
     if(app->scanning) { gap_stop_scanning(); app->scanning = false; }

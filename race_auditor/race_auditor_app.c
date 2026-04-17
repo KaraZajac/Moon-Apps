@@ -143,14 +143,14 @@ RaceAuditorApp* race_auditor_app_alloc(void) {
     app->audit_log = furi_string_alloc();
 
     ble_gatt_client_init();
-    ble_gatt_client_set_callback(race_gatt_callback, app);
+    ble_gatt_client_set_callback(0, race_gatt_callback, app);
 
     return app;
 }
 
 void race_auditor_app_free(RaceAuditorApp* app) {
     gap_set_scan_callback(NULL, NULL);
-    ble_gatt_client_set_callback(NULL, NULL);
+    ble_gatt_client_set_callback(0, NULL, NULL);
 
     if(app->scanning) {
         gap_stop_scanning();

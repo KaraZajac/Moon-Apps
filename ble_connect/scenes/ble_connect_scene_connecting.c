@@ -59,6 +59,9 @@ bool ble_connect_scene_connecting_on_event(void* context, SceneManagerEvent even
                 app->connection_handle = gap_get_connection_handle();
                 FURI_LOG_I(TAG, "Connected, handle=%d", app->connection_handle);
 
+                ble_gatt_client_set_callback(
+                    app->connection_handle, ble_connect_gatt_callback, app);
+
                 // Initiate pairing — if device requires auth, the stack
                 // will emit PinCodeShow; otherwise pairing completes silently
                 // and we proceed to GATT discovery
@@ -72,7 +75,9 @@ bool ble_connect_scene_connecting_on_event(void* context, SceneManagerEvent even
                 // 10 second timeout
                 furi_timer_stop(app->connect_timer);
                 FURI_LOG_W(TAG, "Connection timeout");
-                gap_disconnect(0);
+                if(app->connection_handle) {
+                    gap_disconnect(app->connection_handle);
+                }
                 app->connected = false;
                 scene_manager_previous_scene(app->scene_manager);
                 consumed = true;
