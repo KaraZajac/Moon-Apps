@@ -264,7 +264,23 @@ static void process_incoming_packet(BitchatApp* app) {
         break;
     }
     case BC_TYPE_NOISE_HS: {
-        // Noise handshake message — find or create peer's handshake state
+        /* Noise handshake responder path.
+         *
+         * Previous version held app->mutex through noise_handshake_read/
+         * write, ble_svc_bitchat_tx, AND ble_gatt_client_write. Since
+         * process_incoming_packet runs on the view-dispatcher thread and
+         * bitchat_gatt_callback on the BLE event thread takes the same
+         * mutex for inbound notifications, any new notification arriving
+         * during the handshake response blocked the BLE thread — which in
+         * turn starved the BLE writes we were trying to issue = full UI
+         * freeze as soon as the handshake response landed.
+         *
+         * Fix: only the peer-table lookup actually needs the mutex. Peer
+         * entries don't get deleted during a session (only added), so a
+         * pointer grabbed under the mutex stays valid afterward. noise_hs
+         * is per-peer and only touched from this thread (chat / scan-scene
+         * announce flow), so no lock is needed around the crypto or the
+         * BLE writes. */
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         BcPeer* peer = NULL;
         for(uint8_t i = 0; i < app->peer_count; i++) {
@@ -273,10 +289,10 @@ static void process_incoming_packet(BitchatApp* app) {
                 break;
             }
         }
+        furi_mutex_release(app->mutex);
 
         if(!peer) {
             FURI_LOG_W(TAG, "Noise handshake from unknown peer");
-            furi_mutex_release(app->mutex);
             break;
         }
 
@@ -291,7 +307,6 @@ static void process_incoming_packet(BitchatApp* app) {
         if(!noise_handshake_read(&peer->noise_hs, payload, payload_len)) {
             FURI_LOG_E(TAG, "Noise handshake read failed");
             peer->noise_hs_active = false;
-            furi_mutex_release(app->mutex);
             break;
         }
 
@@ -309,6 +324,7 @@ static void process_incoming_packet(BitchatApp* app) {
             memcpy(&hs_pkt[hs_hdr_len + BC_SENDER_ID_SIZE], hs_out, hs_len);
             uint16_t hs_total = hs_hdr_len + BC_SENDER_ID_SIZE + hs_len;
 
+            /* BLE writes WITHOUT the mutex held. */
             if(app->svc) ble_svc_bitchat_tx(app->svc, hs_pkt, hs_total);
             if(peer->central_active && peer->central_char)
                 ble_gatt_client_write(peer->central_handle, peer->central_char, hs_pkt, hs_total);
@@ -322,14 +338,18 @@ static void process_incoming_packet(BitchatApp* app) {
 
             char sys_msg[48];
             snprintf(sys_msg, sizeof(sys_msg), "%s: encrypted", peer->nickname);
+            /* bitchat_add_chat_message touches app->messages/chat_log —
+             * protect that with a brief mutex section. */
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
             bitchat_add_chat_message(app, "*", sys_msg);
+            furi_mutex_release(app->mutex);
         }
-
-        furi_mutex_release(app->mutex);
         break;
     }
     case BC_TYPE_NOISE_ENC: {
-        // Encrypted message — find peer's session and decrypt
+        /* Same pattern as BC_TYPE_NOISE_HS: grab peer pointer under the
+         * mutex, release, then do crypto + UI update without the lock.
+         * noise_session state is per-peer and only written here. */
         furi_mutex_acquire(app->mutex, FuriWaitForever);
         BcPeer* peer = NULL;
         for(uint8_t i = 0; i < app->peer_count; i++) {
@@ -338,10 +358,10 @@ static void process_incoming_packet(BitchatApp* app) {
                 break;
             }
         }
+        furi_mutex_release(app->mutex);
 
         if(!peer || !peer->noise_session.active) {
             FURI_LOG_W(TAG, "Encrypted msg from peer without session");
-            furi_mutex_release(app->mutex);
             break;
         }
 
@@ -350,10 +370,7 @@ static void process_incoming_packet(BitchatApp* app) {
             &peer->noise_session, payload, payload_len, decrypted, sizeof(decrypted));
 
         if(dec_len > 0) {
-            // NoisePayload: [1B type][data]
             if(dec_len >= 2 && decrypted[0] == 0x01) {
-                // PRIVATE_MESSAGE — extract content
-                // Simple: just treat bytes 1..end as UTF-8 text
                 char content[BC_MAX_MSG_CONTENT + 1];
                 uint16_t content_len = dec_len - 1;
                 if(content_len > BC_MAX_MSG_CONTENT) content_len = BC_MAX_MSG_CONTENT;
@@ -361,14 +378,15 @@ static void process_incoming_packet(BitchatApp* app) {
                 content[content_len] = '\0';
 
                 FURI_LOG_I(TAG, "Encrypted msg from %s: %s", peer->nickname, content);
+                /* Brief mutex section for the chat log mutation. */
+                furi_mutex_acquire(app->mutex, FuriWaitForever);
                 bitchat_add_chat_message(app, peer->nickname, content);
+                furi_mutex_release(app->mutex);
                 notification_message(app->notifications, &sequence_single_vibro);
             }
         } else {
             FURI_LOG_W(TAG, "Decryption failed");
         }
-
-        furi_mutex_release(app->mutex);
         break;
     }
     default:
