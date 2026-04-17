@@ -61,6 +61,11 @@ static void bc_scan_callback(GapScanResultData* result, void* context) {
     BitchatApp* app = context;
     if(!result->data || result->data_len == 0) return;
 
+    /* Ignore any advertisement that claims our own MAC. The STM32WB radio
+     * can occasionally observe its own adverts, and even without that, a
+     * nearby repeater could echo us back. */
+    if(memcmp(result->address, app->our_mac, 6) == 0) return;
+
     // Check for BitChat service UUID in advertisement
     uint8_t pos = 0;
     bool found_uuid = false;
@@ -81,12 +86,32 @@ static void bc_scan_callback(GapScanResultData* result, void* context) {
     }
     if(!found_uuid) return;
 
+    /* Parse advertised nickname up front so we can dedupe by identity
+     * rather than by MAC. Android and iOS rotate their BLE address
+     * (Resolvable Private Address) roughly every 15 minutes, so a single
+     * phone can appear as 2-3 distinct MACs during a 10 s scan if we
+     * only key on address. The nickname is stable across RPA rotations
+     * for the same logical peer. */
+    char adv_name[32] = {0};
+    bool have_name = parse_adv_name(result->data, result->data_len, adv_name, sizeof(adv_name));
+
     furi_mutex_acquire(app->mutex, FuriWaitForever);
 
-    // Update existing or add new
+    /* Dedupe pass: prefer a nickname match over a MAC match. Update the
+     * existing entry's current MAC and RSSI so the user can still connect
+     * to the latest RPA after rotation. */
     for(uint8_t i = 0; i < app->scan_result_count; i++) {
-        if(memcmp(app->scan_results[i].address, result->address, 6) == 0) {
-            app->scan_results[i].rssi = result->rssi;
+        BcPeer* existing = &app->scan_results[i];
+        bool mac_match = (memcmp(existing->address, result->address, 6) == 0);
+        bool name_match = have_name && existing->nickname[0] != '\0' &&
+                          strncmp(existing->nickname, adv_name, BC_MAX_NICKNAME) == 0;
+        if(mac_match || name_match) {
+            if(!mac_match) {
+                /* Same nickname, new RPA — refresh the address. */
+                memcpy(existing->address, result->address, 6);
+                existing->address_type = result->address_type;
+            }
+            existing->rssi = result->rssi;
             furi_mutex_release(app->mutex);
             return;
         }
@@ -97,9 +122,8 @@ static void bc_scan_callback(GapScanResultData* result, void* context) {
         memcpy(dev->address, result->address, 6);
         dev->address_type = result->address_type;
         dev->rssi = result->rssi;
-        char name[32] = {0};
-        if(parse_adv_name(result->data, result->data_len, name, sizeof(name))) {
-            strncpy(dev->nickname, name, BC_MAX_NICKNAME);
+        if(have_name) {
+            strncpy(dev->nickname, adv_name, BC_MAX_NICKNAME);
         } else {
             snprintf(dev->nickname, BC_MAX_NICKNAME, "%02X:%02X:%02X:%02X",
                 result->address[3], result->address[2],
@@ -337,6 +361,12 @@ check_gatt:
     if(event.event >= 1000 && event.event < (uint32_t)(1000 + app->scan_result_count)) {
         app->selected_scan_idx = event.event - 1000;
         BcPeer* dev = &app->scan_results[app->selected_scan_idx];
+        FURI_LOG_I(TAG,
+            "Peer selected idx=%u name=%s addr=%02X:%02X:%02X:%02X:%02X:%02X type=%u",
+            app->selected_scan_idx, dev->nickname,
+            dev->address[5], dev->address[4], dev->address[3],
+            dev->address[2], dev->address[1], dev->address[0],
+            dev->address_type);
 
         scan_phase = ScanPhaseConnecting;
         app->tick_count = 0;
@@ -346,6 +376,7 @@ check_gatt:
         view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewPopup);
 
         if(!gap_connect(dev->address_type, dev->address)) {
+            FURI_LOG_E(TAG, "gap_connect returned false");
             popup_set_text(app->popup, "Connect failed", 64, 36, AlignCenter, AlignCenter);
             scan_phase = ScanPhaseDone;
         }
