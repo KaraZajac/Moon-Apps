@@ -275,24 +275,24 @@ int32_t bt_explorer_app(void* p) {
             switch(app->view) {
             case ExplorerViewScan:
                 if(event.key == InputKeyBack) {
-                    if(app->scanning) furi_hal_bt_stop_scanning();
+                    if(app->scanning) gap_stop_scanning();
                     running = false;
                 } else if(event.key == InputKeyOk) {
                     if(!app->scanning && !app->connecting && app->cursor < app->device_count) {
                         // Connect to selected device
                         app->connecting = true;
                         ExplorerDevice* d = &app->devices[app->cursor];
-                        furi_hal_bt_connect(d->address_type, d->address);
+                        gap_connect(d->address_type, d->address);
                     } else if(!app->scanning) {
                         // Start scan
                         app->device_count = 0;
                         app->cursor = 0;
                         app->scroll = 0;
                         app->scanning = true;
-                        furi_hal_bt_set_scan_callback(scan_cb, app);
+                        gap_set_scan_callback(scan_cb, app);
                         GapScanParams sp = {.interval = 0x60, .window = 0x30,
                                             .active = true, .timeout_ms = SCAN_TIMEOUT_MS};
-                        if(!furi_hal_bt_start_scanning(&sp)) app->scanning = false;
+                        if(!gap_start_scanning(&sp)) app->scanning = false;
                     }
                 } else if(event.key == InputKeyUp && app->cursor > 0) {
                     app->cursor--;
@@ -306,7 +306,8 @@ int32_t bt_explorer_app(void* p) {
             case ExplorerViewServices:
                 if(event.key == InputKeyBack) {
                     app->view = ExplorerViewScan;
-                    furi_hal_bt_disconnect(app->connection_handle);
+                    ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
+                    gap_disconnect(app->connection_handle);
                     app->connected = false;
                 } else if(event.key == InputKeyOk && app->cursor < app->service_count) {
                     ble_gatt_client_discover_characteristics(
@@ -370,11 +371,13 @@ int32_t bt_explorer_app(void* p) {
         view_port_update(app->view_port);
     }
 
-    if(app->connected) {
+    /* Always unregister if we ever registered — `connected` can drift out of
+     * sync with the real connection state if the peer drops us. */
+    if(app->connection_handle) {
         ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
-        furi_hal_bt_disconnect(app->connection_handle);
+        gap_disconnect(app->connection_handle);
     }
-    furi_hal_bt_set_scan_callback(NULL, NULL);
+    gap_set_scan_callback(NULL, NULL);
     gui_remove_view_port(app->gui, app->view_port);
     view_port_free(app->view_port);
     furi_record_close(RECORD_GUI);

@@ -276,7 +276,7 @@ static void gatt_cb(BleGattClientEvent* event, void* context) {
         snprintf(app->test_status, sizeof(app->test_status), "VULNERABLE - KBP responded");
         dev->vuln_status = WpVulnVulnerable;
         app->testing = false;
-        furi_hal_bt_disconnect(app->connection_handle);
+        gap_disconnect(app->connection_handle);
         break;
 
     case BleGattClientEventWriteComplete:
@@ -289,7 +289,7 @@ static void gatt_cb(BleGattClientEvent* event, void* context) {
         snprintf(app->test_status, sizeof(app->test_status), "PATCHED - KBP rejected");
         dev->vuln_status = WpVulnPatched;
         app->testing = false;
-        furi_hal_bt_disconnect(app->connection_handle);
+        gap_disconnect(app->connection_handle);
         break;
 
     default:
@@ -427,7 +427,7 @@ static void start_vuln_test(WhisperPairApp* app) {
 
     ble_gatt_client_init();
     /* Per-connection callback registered when the connection handle arrives */
-    furi_hal_bt_connect(d->address_type, d->address);
+    gap_connect(d->address_type, d->address);
 }
 
 int32_t whisper_pair_app(void* p) {
@@ -454,7 +454,7 @@ int32_t whisper_pair_app(void* p) {
             switch(app->view) {
             case WpViewScan:
                 if(event.key == InputKeyBack) {
-                    if(app->scanning) furi_hal_bt_stop_scanning();
+                    if(app->scanning) gap_stop_scanning();
                     running = false;
                 } else if(event.key == InputKeyOk) {
                     if(!app->scanning && app->device_count > 0) {
@@ -464,10 +464,10 @@ int32_t whisper_pair_app(void* p) {
                         app->cursor = 0;
                         app->scroll = 0;
                         app->scanning = true;
-                        furi_hal_bt_set_scan_callback(scan_cb, app);
+                        gap_set_scan_callback(scan_cb, app);
                         GapScanParams sp = {.interval = 0x60, .window = 0x30,
                                             .active = true, .timeout_ms = SCAN_TIMEOUT_MS};
-                        if(!furi_hal_bt_start_scanning(&sp)) app->scanning = false;
+                        if(!gap_start_scanning(&sp)) app->scanning = false;
                     }
                 } else if(event.key == InputKeyUp && app->cursor > 0) {
                     app->cursor--;
@@ -517,7 +517,7 @@ int32_t whisper_pair_app(void* p) {
         view_port_update(app->view_port);
     }
 
-    furi_hal_bt_set_scan_callback(NULL, NULL);
+    gap_set_scan_callback(NULL, NULL);
     if(app->connection_handle) {
         ble_gatt_client_set_callback(app->connection_handle, NULL, NULL);
     }

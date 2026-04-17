@@ -68,7 +68,9 @@ bool ble_connect_scene_connecting_on_event(void* context, SceneManagerEvent even
                 // 10 second timeout
                 furi_timer_stop(app->connect_timer);
                 FURI_LOG_W(TAG, "Connection timeout");
-                gap_disconnect(0);
+                if(app->connection_handle) {
+                    gap_disconnect(app->connection_handle);
+                }
                 app->connected = false;
                 scene_manager_previous_scene(app->scene_manager);
                 consumed = true;
