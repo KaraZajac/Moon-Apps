@@ -96,18 +96,35 @@ static void process_incoming_packet(BitchatApp* app) {
             if(app->svc) {
                 ble_svc_bitchat_tx(app->svc, relay_buf, relay_len);
             }
-            // Send via central connections
+            /* Snapshot central targets under the mutex, write without it.
+             * Previously the BLE writes + furi_delay_ms ran under
+             * app->mutex, which blocked bitchat_gatt_callback on the BLE
+             * event thread. */
+            struct {
+                uint16_t handle;
+                uint16_t char_handle;
+            } relay_targets[BC_MAX_PEERS];
+            uint8_t relay_target_count = 0;
             furi_mutex_acquire(app->mutex, FuriWaitForever);
-            for(uint8_t i = 0; i < app->peer_count; i++) {
-                if(app->peers[i].central_active && app->peers[i].central_char != 0) {
-                    ble_gatt_client_write(
-                        app->peers[i].central_handle,
-                        app->peers[i].central_char,
-                        relay_buf, relay_len);
-                    furi_delay_ms(10);
-                }
+            for(uint8_t i = 0; i < app->peer_count &&
+                               relay_target_count < BC_MAX_PEERS; i++) {
+                if(!app->peers[i].central_active ||
+                   app->peers[i].central_char == 0) continue;
+                relay_targets[relay_target_count].handle =
+                    app->peers[i].central_handle;
+                relay_targets[relay_target_count].char_handle =
+                    app->peers[i].central_char;
+                relay_target_count++;
             }
             furi_mutex_release(app->mutex);
+
+            for(uint8_t i = 0; i < relay_target_count; i++) {
+                if(i > 0) furi_delay_ms(50);
+                ble_gatt_client_write(
+                    relay_targets[i].handle,
+                    relay_targets[i].char_handle,
+                    relay_buf, relay_len);
+            }
             FURI_LOG_D(TAG, "Relayed packet (new TTL=%d)", relay_ttl);
         }
     }
@@ -421,88 +438,135 @@ bool bitchat_scene_chat_on_event(void* context, SceneManagerEvent event) {
             rebuild_chat_widget(app);
             return true;
         } else if(event.event == BitchatCustomEventMsgSend) {
-            // User submitted a message — send to ALL connected peers
-            // Use encrypted channel when Noise session is active
-            if(app->input_buf[0] != '\0') {
-                // Always build the broadcast (unencrypted) packet for peers without sessions
-                uint8_t pkt[BC_PAD_BLOCK_256];
-                uint16_t pkt_len = bc_build_signed_broadcast_packet(
-                    pkt, sizeof(pkt), app->identity.peer_id, app->input_buf,
-                    bc_chat_sign_wrapper, &app->identity);
+            /* User submitted a message.
+             *
+             * The previous version held app->mutex for the entire send
+             * loop — across `noise_session_encrypt`, `furi_delay_ms`,
+             * and `ble_gatt_client_write`. If any BLE notification
+             * arrived mid-send, bitchat_gatt_callback on the BLE event
+             * thread blocked on the mutex and the UI froze. Restructure:
+             *
+             *   1. Skip empty input.
+             *   2. Build the broadcast packet (no shared state — safe
+             *      outside the mutex).
+             *   3. Snapshot active central peers into a small local
+             *      array under the mutex, then release it.
+             *   4. Do all crypto + BLE writes with the mutex released.
+             *      Noise session counters are per-peer and only written
+             *      here (chat-scene view thread), so that's safe.
+             *   5. Update the local chat log under a brief mutex
+             *      section again at the end.
+             *
+             * Also: drop the redundant "legacy single connection" write
+             * path — for any peer we're central to, it's already in the
+             * peer table, so that branch duplicated every write and put
+             * two ATT requests in flight on the same link (hitting
+             * HCI_COMMAND_DISALLOWED 0x0C). */
+            if(app->input_buf[0] == '\0') return true;
 
-                if(pkt_len > 0) {
-                    FURI_LOG_I(TAG, "Sending message: %s (%d bytes)", app->input_buf, pkt_len);
-
-                    furi_mutex_acquire(app->mutex, FuriWaitForever);
-                    for(uint8_t i = 0; i < app->peer_count; i++) {
-                        BcPeer* peer = &app->peers[i];
-                        if(!peer->central_active || peer->central_char == 0) continue;
-
-                        if(peer->noise_session.active) {
-                            // Send encrypted private message (type 0x11)
-                            // NoisePayload: [0x01 = PRIVATE_MESSAGE][UTF-8 content]
-                            uint8_t payload_buf[256];
-                            uint16_t content_len = strlen(app->input_buf);
-                            if(content_len > 200) content_len = 200;
-                            payload_buf[0] = 0x01; // PRIVATE_MESSAGE
-                            memcpy(&payload_buf[1], app->input_buf, content_len);
-
-                            uint8_t enc_buf[300];
-                            uint16_t enc_len = noise_session_encrypt(
-                                &peer->noise_session,
-                                payload_buf, 1 + content_len,
-                                enc_buf, sizeof(enc_buf));
-
-                            if(enc_len > 0) {
-                                // Build type 0x11 packet with encrypted payload
-                                uint8_t enc_pkt[512];
-                                uint16_t hdr_len = bc_encode_header(
-                                    enc_pkt, sizeof(enc_pkt),
-                                    BC_TYPE_NOISE_ENC, BC_DEFAULT_TTL,
-                                    BC_FLAG_HAS_RECIPIENT,
-                                    app->identity.peer_id, enc_buf, enc_len);
-                                // Append recipient ID
-                                memcpy(&enc_pkt[hdr_len], peer->peer_id, BC_SENDER_ID_SIZE);
-                                memcpy(&enc_pkt[hdr_len + BC_SENDER_ID_SIZE], enc_buf, enc_len);
-                                uint16_t total = hdr_len + BC_SENDER_ID_SIZE + enc_len;
-
-                                furi_delay_ms(20);
-                                ble_gatt_client_write(
-                                    peer->central_handle, peer->central_char,
-                                    enc_pkt, total);
-                                FURI_LOG_I(TAG, "Sent encrypted msg to %s (%d bytes)",
-                                    peer->nickname, total);
-                            }
-                        } else {
-                            // No session — send unencrypted broadcast
-                            furi_delay_ms(20);
-                            ble_gatt_client_write(
-                                peer->central_handle, peer->central_char,
-                                pkt, pkt_len);
-                        }
-                    }
-                    furi_mutex_release(app->mutex);
-
-                    // Always send unencrypted broadcast via peripheral (for non-session peers)
-                    if(app->svc) {
-                        ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
-                    }
-
-                    // Legacy single connection
-                    if(app->connected && app->bc_char_handle != 0) {
-                        furi_delay_ms(20);
-                        ble_gatt_client_write(
-                            app->connection_handle, app->bc_char_handle, pkt, pkt_len);
-                    }
-                }
-
-                announce_tick_counter = 0;
-
-                furi_mutex_acquire(app->mutex, FuriWaitForever);
-                bitchat_add_chat_message(app, app->nickname, app->input_buf);
-                furi_mutex_release(app->mutex);
+            uint8_t pkt[BC_PAD_BLOCK_256];
+            uint16_t pkt_len = bc_build_signed_broadcast_packet(
+                pkt, sizeof(pkt), app->identity.peer_id, app->input_buf,
+                bc_chat_sign_wrapper, &app->identity);
+            if(pkt_len == 0) {
+                FURI_LOG_W(TAG, "Failed to build broadcast packet");
                 app->input_buf[0] = '\0';
+                return true;
             }
+            FURI_LOG_I(TAG, "Sending message: %s (%d bytes)",
+                app->input_buf, pkt_len);
+
+            /* Snapshot peer targets under a short-lived mutex section. */
+            struct {
+                uint16_t handle;
+                uint16_t char_handle;
+                bool have_session;
+                uint8_t recipient_id[BC_SENDER_ID_SIZE];
+                BcPeer* peer_ptr;  /* for noise_session_encrypt — peer slots
+                                    * don't move or get freed while a
+                                    * central_active connection is open */
+                char nickname[BC_MAX_NICKNAME + 1];
+            } targets[BC_MAX_PEERS];
+            uint8_t target_count = 0;
+
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            for(uint8_t i = 0; i < app->peer_count && target_count < BC_MAX_PEERS; i++) {
+                BcPeer* peer = &app->peers[i];
+                if(!peer->central_active || peer->central_char == 0) continue;
+                targets[target_count].handle = peer->central_handle;
+                targets[target_count].char_handle = peer->central_char;
+                targets[target_count].have_session = peer->noise_session.active;
+                memcpy(targets[target_count].recipient_id, peer->peer_id,
+                       BC_SENDER_ID_SIZE);
+                strncpy(targets[target_count].nickname, peer->nickname,
+                        BC_MAX_NICKNAME);
+                targets[target_count].nickname[BC_MAX_NICKNAME] = '\0';
+                targets[target_count].peer_ptr = peer;
+                target_count++;
+            }
+            furi_mutex_release(app->mutex);
+
+            /* Writes + crypto run WITHOUT the mutex held.
+             * Space writes ~50ms apart so consecutive ATT requests don't
+             * collide on the same link (upstream fix commit 14b8b2bf
+             * used a similar delay). A proper state-machine wait on
+             * BleGattClientEventWriteComplete would be cleaner but isn't
+             * needed for the freeze fix. */
+            for(uint8_t i = 0; i < target_count; i++) {
+                if(targets[i].have_session) {
+                    uint8_t payload_buf[256];
+                    uint16_t content_len = strlen(app->input_buf);
+                    if(content_len > 200) content_len = 200;
+                    payload_buf[0] = 0x01; /* PRIVATE_MESSAGE */
+                    memcpy(&payload_buf[1], app->input_buf, content_len);
+
+                    uint8_t enc_buf[300];
+                    uint16_t enc_len = noise_session_encrypt(
+                        &targets[i].peer_ptr->noise_session,
+                        payload_buf, 1 + content_len,
+                        enc_buf, sizeof(enc_buf));
+                    if(enc_len == 0) continue;
+
+                    uint8_t enc_pkt[512];
+                    uint16_t hdr_len = bc_encode_header(
+                        enc_pkt, sizeof(enc_pkt),
+                        BC_TYPE_NOISE_ENC, BC_DEFAULT_TTL,
+                        BC_FLAG_HAS_RECIPIENT,
+                        app->identity.peer_id, enc_buf, enc_len);
+                    memcpy(&enc_pkt[hdr_len], targets[i].recipient_id,
+                           BC_SENDER_ID_SIZE);
+                    memcpy(&enc_pkt[hdr_len + BC_SENDER_ID_SIZE],
+                           enc_buf, enc_len);
+                    uint16_t total = hdr_len + BC_SENDER_ID_SIZE + enc_len;
+
+                    if(i > 0) furi_delay_ms(50);
+                    ble_gatt_client_write(
+                        targets[i].handle, targets[i].char_handle,
+                        enc_pkt, total);
+                    FURI_LOG_I(TAG, "Sent encrypted msg to %s (%d bytes)",
+                        targets[i].nickname, total);
+                } else {
+                    if(i > 0) furi_delay_ms(50);
+                    ble_gatt_client_write(
+                        targets[i].handle, targets[i].char_handle,
+                        pkt, pkt_len);
+                    FURI_LOG_I(TAG, "Sent plain msg to %s (%d bytes)",
+                        targets[i].nickname, pkt_len);
+                }
+            }
+
+            /* Notify any peers connected to us via our peripheral service.
+             * No mutex; ble_svc_bitchat_tx is internally serialized. */
+            if(app->svc) {
+                ble_svc_bitchat_tx(app->svc, pkt, pkt_len);
+            }
+
+            announce_tick_counter = 0;
+
+            furi_mutex_acquire(app->mutex, FuriWaitForever);
+            bitchat_add_chat_message(app, app->nickname, app->input_buf);
+            furi_mutex_release(app->mutex);
+            app->input_buf[0] = '\0';
             // Return to chat widget
             rebuild_chat_widget(app);
             view_dispatcher_switch_to_view(app->view_dispatcher, BitchatViewWidget);
