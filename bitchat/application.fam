@@ -3,7 +3,7 @@ App(
     name="BitChat",
     apptype=FlipperAppType.EXTERNAL,
     entry_point="bitchat_app",
-    stack_size=4 * 1024,
+    stack_size=8 * 1024,
     requires=["gui"],
     fap_category="Bluetooth",
     fap_icon="icon.png",
