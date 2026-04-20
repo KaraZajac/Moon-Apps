@@ -1,0 +1,13 @@
+App(
+    appid="moon_gps",
+    name="Moon GPS",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="moon_gps_app",
+    stack_size=2 * 1024,
+    fap_category="Tools",
+    fap_version="0.1",
+    fap_description="Live GPS fix from the paired Moon Companion phone.",
+    fap_author="Moon-OS",
+    requires=["moon_companion"],
+    sources=["moon_gps.c"],
+)
