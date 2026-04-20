@@ -1,0 +1,13 @@
+App(
+    appid="moon_api",
+    name="Moon API",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="moon_api_app",
+    stack_size=2 * 1024,
+    fap_category="Tools",
+    fap_version="0.1",
+    fap_description="Smoke-test the moon-os.dev API endpoints through the Moon Companion HTTP proxy.",
+    fap_author="Moon-OS",
+    requires=["moon_companion"],
+    sources=["moon_api.c"],
+)
